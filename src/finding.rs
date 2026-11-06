@@ -25,7 +25,7 @@ impl Severity {
 
 impl fmt::Display for Severity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.pad(self.as_str())
     }
 }
 
@@ -156,8 +156,15 @@ mod tests {
             assert_eq!(Rule::from_id(r.id()), Some(*r));
         }
         let mut ids: Vec<_> = Rule::ALL.iter().map(|r| r.id()).collect();
+        ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), Rule::ALL.len());
+    }
+
+    #[test]
+    fn severity_display_honours_width() {
+        assert_eq!(format!("[{:<5}]", Severity::Info), "[info ]");
+        assert_eq!(format!("[{:>5}]", Severity::Warn), "[ warn]");
     }
 
     #[test]

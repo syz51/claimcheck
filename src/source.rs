@@ -58,23 +58,8 @@ impl IndexedText {
             }
         }
         let mut words: HashMap<String, Vec<u32>> = HashMap::new();
-        let mut i = 0;
-        while i < chars.len() {
-            if chars[i].is_alphabetic() && !normalize::is_cjk(chars[i]) {
-                let start = i;
-                while i < chars.len() && chars[i].is_alphabetic() && !normalize::is_cjk(chars[i]) {
-                    i += 1;
-                }
-                let w: String = chars[start..i]
-                    .iter()
-                    .flat_map(|c| c.to_lowercase())
-                    .collect();
-                if w.chars().count() >= 3 {
-                    words.entry(w).or_default().push(start as u32);
-                }
-            } else {
-                i += 1;
-            }
+        for (start, _, w) in normalize::words(&chars) {
+            words.entry(w).or_default().push(start as u32);
         }
         IndexedText {
             text,

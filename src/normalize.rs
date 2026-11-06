@@ -164,6 +164,32 @@ pub fn skeleton_str(text: &str) -> String {
     skeleton(&normalize_str(text)).0.into_iter().collect()
 }
 
+/// Lowercased words of at least three letters outside CJK scripts, as
+/// `(start, end, word)` character ranges of `chars`.
+pub fn words(chars: &[char]) -> Vec<(usize, usize, String)> {
+    let letter = |c: char| c.is_alphabetic() && !is_cjk(c);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !letter(chars[i]) {
+            i += 1;
+            continue;
+        }
+        let s = i;
+        while i < chars.len() && letter(chars[i]) {
+            i += 1;
+        }
+        if i - s >= 3 {
+            out.push((
+                s,
+                i,
+                chars[s..i].iter().flat_map(|c| c.to_lowercase()).collect(),
+            ));
+        }
+    }
+    out
+}
+
 /// True for characters of scripts written without spaces between words.
 pub fn is_cjk(c: char) -> bool {
     matches!(c as u32,

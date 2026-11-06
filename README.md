@@ -148,7 +148,7 @@ title_similarity = 0.9
 # rule-id = "error" | "warn" | "info" | "off"
 ```
 
-`claimcheck rules` and the source (`src/config.rs`) give the full keyword lists. Keyword phrases match whole words, case-insensitively. A keyword within three words after a modal or conditional word does not count. Those words are must, should, could, would, might, may, can, cannot, whether, if and unless. A keyword hyphenated to another word, as in "outcome-trained agents", does not count either.
+`claimcheck rules` and the source (`src/config.rs`) give the full keyword lists. Keyword phrases match whole words, case-insensitively. A keyword within three words after a modal or conditional word does not count. Those words are must, should, could, would, might, may, can, cannot, whether, if and unless. A capitalised "May" is read as the month, unless it opens the sentence with no number after it. A keyword hyphenated to another word, as in "outcome-trained agents", does not count either.
 
 A severity override sets the severity of every finding of the rule, whatever severity the rule would have given it. For example, `quote-not-found = "info"` makes both near misses (warn) and fabricated quotations (error) info, and `depth-insufficient = "error"` makes its info findings errors too. `off` drops every finding of the rule.
 

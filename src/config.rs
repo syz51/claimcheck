@@ -333,10 +333,33 @@ const MODALS: &[&str] = &[
     "must", "should", "could", "would", "might", "may", "can", "cannot", "whether", "if", "unless",
 ];
 
-/// True when `text` contains one of [`MODALS`] as a word.
-pub fn has_modal(text: &str) -> bool {
+/// The words of `text` with their byte offsets.
+fn words_at(text: &str) -> impl DoubleEndedIterator<Item = (usize, &str)> {
     text.split(|c: char| !c.is_alphanumeric())
-        .any(|w| !w.is_empty() && MODALS.contains(&w.to_lowercase().as_str()))
+        .filter(|w| !w.is_empty())
+        .map(move |w| (w.as_ptr().addr() - text.as_ptr().addr(), w))
+}
+
+/// True when the word `w` at byte `at` of the sentence `text` is one of
+/// [`MODALS`]. A capitalised "May" is the month, unless it opens the sentence
+/// and no number follows it ("May we…", but not "May 2025 …").
+fn is_modal(text: &str, at: usize, w: &str) -> bool {
+    if !MODALS.contains(&w.to_lowercase().as_str()) {
+        return false;
+    }
+    if w != "May" {
+        return true;
+    }
+    let first = !text[..at].contains(char::is_alphanumeric);
+    let number_follows = text[at + w.len()..]
+        .trim_start()
+        .starts_with(|c: char| c.is_ascii_digit());
+    first && !number_follows
+}
+
+/// True when the sentence `text` contains one of [`MODALS`] as a word.
+pub fn has_modal(text: &str) -> bool {
+    words_at(text).any(|(at, w)| is_modal(text, at, w))
 }
 
 /// Matches of `re` in `text` that are not within three words after a modal
@@ -360,20 +383,12 @@ pub fn asserted_matches<'t>(re: &Regex, text: &'t str) -> Vec<regex::Match<'t>> 
             !joined_before && !joined_after
         })
         .filter(|m| {
-            !text[..m.start()]
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|w| !w.is_empty())
+            !words_at(&text[..m.start()])
                 .rev()
                 .take(3)
-                .any(|w| MODALS.contains(&w.to_lowercase().as_str()))
+                .any(|(at, w)| is_modal(text, at, w))
         })
         .collect()
-}
-
-/// First match of `re` in `text` that is not within three words after a modal
-/// nor hyphenated to another word.
-pub fn asserted_match<'t>(re: &Regex, text: &'t str) -> Option<regex::Match<'t>> {
-    asserted_matches(re, text).into_iter().next()
 }
 
 /// Compiles a case-insensitive whole-word alternation of literal phrases.
@@ -589,6 +604,20 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capitalised_may_is_a_month_unless_it_opens_a_question_like_sentence() {
+        assert!(has_modal("Results may vary."));
+        assert!(has_modal("May we assume 500 runs?"));
+        assert!(!has_modal("May 2025 accuracy rose to 87.5%."));
+        assert!(!has_modal("In May accuracy rose to 87.5%."));
+        let re = phrase_regex(&["outperforms".into()]).unwrap().unwrap();
+        assert_eq!(
+            asserted_matches(&re, "In May it outperforms BM25.").len(),
+            1
+        );
+        assert!(asserted_matches(&re, "It may outperform or outperforms BM25.").is_empty());
+    }
 
     #[test]
     fn asserted_matches_skip_modals_and_compounds() {

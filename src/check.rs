@@ -6,9 +6,7 @@ use std::sync::{Arc, LazyLock};
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
-use crate::config::{
-    self, Config, LabelRequire, SeverityOverride, asserted_match, asserted_matches,
-};
+use crate::config::{self, Config, LabelRequire, SeverityOverride, asserted_matches};
 use crate::doc::{self, Block, BlockKind, Doc, MARK, Unit};
 use crate::finding::{Evidence, Finding, Rule, Severity};
 use crate::matcher::{self, Approx};
@@ -1021,7 +1019,7 @@ impl<'a> Ctx<'a> {
             .uncited
             .comparative
             .as_ref()
-            .and_then(|re| asserted_match(re, &text));
+            .and_then(|re| asserted_matches(re, &text).into_iter().next());
         if nums.is_empty() && comparative.is_none() {
             return false;
         }
@@ -1341,27 +1339,18 @@ const STOPWORDS: &[&str] = &[
 
 /// Up to six content words nearest to a number, closest first.
 fn context_words(chars: &[char], start: usize, end: usize) -> Vec<String> {
-    let mut words: Vec<(usize, String)> = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i].is_alphabetic() && !normalize::is_cjk(chars[i]) {
-            let s = i;
-            while i < chars.len() && chars[i].is_alphabetic() && !normalize::is_cjk(chars[i]) {
-                i += 1;
-            }
-            let w: String = chars[s..i].iter().flat_map(|c| c.to_lowercase()).collect();
-            if w.chars().count() >= 3 && !STOPWORDS.contains(&w.as_str()) {
-                let dist = if i <= start {
-                    start - i
-                } else {
-                    s.saturating_sub(end)
-                };
-                words.push((dist, w));
-            }
-        } else {
-            i += 1;
-        }
-    }
+    let mut words: Vec<(usize, String)> = normalize::words(chars)
+        .into_iter()
+        .filter(|(_, _, w)| !STOPWORDS.contains(&w.as_str()))
+        .map(|(s, e, w)| {
+            let dist = if e <= start {
+                start - e
+            } else {
+                s.saturating_sub(end)
+            };
+            (dist, w)
+        })
+        .collect();
     words.sort_by_key(|(d, _)| *d);
     let mut out: Vec<String> = Vec::new();
     for (_, w) in words {

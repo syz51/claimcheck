@@ -322,6 +322,9 @@ fn uncited_claims() {
             .is_empty()
     );
     assert!(fx.check("The prompt must fit 4,096 tokens.\n").is_empty());
+    // "May" the month is not a modal.
+    let f = fx.check("May 2025 accuracy rose to 87.5% in the pilot.\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
     // Numbers in quoted example text are not the sentence's own claim.
     assert!(
         fx.check("For example, a filing says \"profit was 1,250 yen\".\n")

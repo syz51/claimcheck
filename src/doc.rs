@@ -593,16 +593,8 @@ fn abbreviation_before(chars: &[PChar], dot: usize) -> bool {
     if ABBREVIATIONS.contains(&word.as_str()) {
         return true;
     }
-    // "et al." is two words.
-    word == "al" || {
-        let before: String = chars[..s]
-            .iter()
-            .rev()
-            .take(4)
-            .map(|p| p.c)
-            .collect::<String>();
-        before.starts_with(" te") && word == "al"
-    }
+    // "et al."
+    word == "al"
 }
 
 /// Character ranges (content, without the marks) of quotations in a block.

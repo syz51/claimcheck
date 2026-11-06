@@ -6,9 +6,12 @@
 
 use std::fmt;
 
+pub mod config;
+pub mod finding;
 pub mod matcher;
 pub mod normalize;
 pub mod numbers;
+pub mod registry;
 pub mod source;
 
 /// A usage, configuration or I/O failure (exit code 2).

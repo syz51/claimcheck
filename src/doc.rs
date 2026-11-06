@@ -530,7 +530,12 @@ pub fn units(block: &Block) -> Vec<Unit> {
             while j < n && is_closing(chars[j].c) {
                 j += 1;
             }
-            let spaced = j == n || chars[j].c.is_whitespace();
+            // A citation may sit between the stop and the space: "pipeline.[2] Next".
+            let mut k = j;
+            while k < n && chars[k].c == MARK {
+                k += 1;
+            }
+            let spaced = k == n || chars[k].c.is_whitespace();
             let next = chars[j..]
                 .iter()
                 .map(|p| p.c)

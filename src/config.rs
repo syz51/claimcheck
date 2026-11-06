@@ -13,7 +13,7 @@ use crate::registry::Depth;
 /// Default citation patterns: `[N](references.md#reference-N)`, `[N]` and `[@key]`.
 pub const DEFAULT_CITATION_PATTERNS: &[&str] = &[
     r"\[(?P<label>\d+)\]\([^)\s]*#reference-(?P<key>\d+)\)",
-    r"\[(?P<keys>[1-9]\d*(?:\s*[,\x{2013}-]\s*[1-9]\d*)*)(?:\s*;[^\[\]\n]*)?\]",
+    r"\[(?P<keys>[1-9]\d*(?:\s*[,;\x{2013}-]\s*[1-9]\d*)*)(?:\s*;\s*[^\[\]\n\d\s][^\[\]\n]*)?\]",
     r"\[(?P<keys>[^\[\]]*@[^\[\]]+)\]",
 ];
 

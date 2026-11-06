@@ -89,7 +89,7 @@ exclude = []              # paths skipped while walking directories
 # optional `cite` (the span that counts as the citation; default: the whole match).
 patterns = [
   '\[(?P<label>\d+)\]\([^)\s]*#reference-(?P<key>\d+)\)',              # [3](references.md#reference-3)
-  '\[(?P<keys>[1-9]\d*(?:\s*[,\x{2013}-]\s*[1-9]\d*)*)(?:\s*;[^\[\]\n]*)?\]', # [3], [3, 5-7], [3; p. 4]
+  '\[(?P<keys>[1-9]\d*(?:\s*[,;\x{2013}-]\s*[1-9]\d*)*)(?:\s*;\s*[^\[\]\n\d\s][^\[\]\n]*)?\]', # [3], [3, 5-7], [3; 9], [3; p. 4]
   '\[(?P<keys>[^\[\]]*@[^\[\]]+)\]',                                    # [@key], [see @a; @b]
 ]
 
@@ -170,7 +170,7 @@ Citation patterns run on the raw Markdown, so link syntax such as `[3](reference
 - an inline link whose text happens to be a number, as in `[3](https://example.org)`;
 - bracketed intervals that start at zero or below, such as `[0, 1]` or `[-3, 0]`. `[1, 2]` reads as two citations.
 
-A citation placed right after a full stop, as in `… pipeline. [2]`, belongs to the sentence it ends.
+A citation placed right after a full stop, as in `… pipeline. [2]` or `… pipeline.[2] Next`, belongs to the sentence it ends. In `[3; 9]` both numbers are keys; text after a semicolon that does not start with a digit, as in `[3; p. 4]`, is a locator.
 
 ### Quotations
 

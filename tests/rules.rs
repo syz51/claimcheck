@@ -563,3 +563,57 @@ fn large_decimals_and_decimal_ranges_are_not_dates() {
         ["12.1", "15.4"]
     );
 }
+
+#[test]
+fn citation_between_full_stop_and_space_ends_the_sentence() {
+    let fx = basic();
+    let f = fx.check(
+        "The retriever uses a two-stage pipeline.[2] Our system outperforms every baseline.\n",
+    );
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::DepthInsufficient, Severity::Error),
+            (Rule::UncitedClaim, Severity::Warn),
+        ],
+        "{f:#?}"
+    );
+    assert_eq!(
+        f[0].data["sentence"],
+        "The retriever uses a two-stage pipeline."
+    );
+    assert!(f[1].message.contains("outperforms"), "{}", f[1].message);
+}
+
+#[test]
+fn unresolved_citation_is_not_an_uncited_claim() {
+    let fx = basic();
+    let f = fx.check("Our system outperforms every baseline [9].\n");
+    assert_eq!(
+        rules(&f),
+        [(Rule::CitationUnresolved, Severity::Error)],
+        "{f:#?}"
+    );
+}
+
+#[test]
+fn numbers_in_a_checked_blockquote_are_not_rechecked() {
+    let fx = basic();
+    let md = "> Our method reaches 12.4 % accuracy on 1234 questions [1]\n";
+    let f = fx.check(md);
+    assert_eq!(rules(&f), [(Rule::QuoteNotFound, Severity::Warn)], "{f:#?}");
+}
+
+#[test]
+fn semicolon_separated_numeric_keys_are_citations() {
+    let fx = basic();
+    let f = fx.check("See [2; 9] for details.\n");
+    assert_eq!(
+        rules(&f),
+        [(Rule::CitationUnresolved, Severity::Error)],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["reference"], "9");
+    // A locator after the semicolon is not a key.
+    assert!(fx.check("See [1; p. 4] and [1; note].\n").is_empty());
+}

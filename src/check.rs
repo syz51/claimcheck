@@ -337,10 +337,13 @@ impl<'a> Ctx<'a> {
             let units = doc::units(block);
             let spans = doc::quotes(block);
             let mut quoted: Vec<(usize, usize)> = Vec::new();
-            if !block
+            if block
                 .quote_group
                 .is_some_and(|g| handled_groups.contains(&g))
             {
+                // The whole blockquote was checked as a quotation.
+                quoted.push((0, block.chars.len()));
+            } else {
                 for &(s, e) in &spans {
                     let mut cites = block.cites_in(s, e);
                     for u in units.iter().filter(|u| u.start < e && s < u.end) {
@@ -376,6 +379,9 @@ impl<'a> Ctx<'a> {
                     if block.is_prose() {
                         self.check_depth(block, u, line, &nums, &refs);
                     }
+                } else if !u.cites.is_empty() {
+                    // Every key is unresolved: citation-unresolved reports it,
+                    // and the sentence still cites, so it is not uncited.
                 } else if block.is_prose() && block.quote_group.is_none() {
                     // A number inside quotation marks belongs to quoted or
                     // illustrative text, not to a claim of the sentence.

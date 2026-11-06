@@ -5,7 +5,9 @@
 //! canonical value drops thousands separators, leading zeros and trailing
 //! fractional zeros: `1,234`, `1234` and `1234.0` all become `1234`; `.5` and
 //! `0.50` become `0.5`. Percent signs and spacing do not change the value, so
-//! `12.3%`, `12.3 %` and a table cell `12.3` match.
+//! `12.3%`, `12.3 %` and a table cell `12.3` match. A minus sign is kept
+//! apart: a negative number in a document needs a negative number in the
+//! source, while an unsigned one ("fell by 2.1") also matches `-2.1`.
 
 /// A number found in normalized text. Positions are indices into the scanned
 /// character slice.
@@ -26,6 +28,8 @@ pub struct NumTok {
     pub glued_right: bool,
     /// More than one decimal point (`1.2.3`), or a dotted identifier.
     pub dotted: bool,
+    /// Preceded by a minus sign that is not a hyphen or range dash.
+    pub negative: bool,
 }
 
 impl NumTok {
@@ -43,7 +47,33 @@ impl NumTok {
     }
 
     pub fn as_f64(&self) -> Option<f64> {
-        self.value.parse().ok()
+        let v: f64 = self.value.parse().ok()?;
+        Some(if self.negative { -v } else { v })
+    }
+
+    /// Canonical value with its sign, for display.
+    pub fn signed(&self) -> String {
+        if self.negative {
+            format!("-{}", self.value)
+        } else {
+            self.value.clone()
+        }
+    }
+
+    /// Keys under which a source number is indexed: its values, and for a
+    /// negative number also the signed values.
+    pub fn index_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.values().map(str::to_string).collect();
+        if self.negative {
+            keys.extend(self.values().map(|v| format!("-{v}")).collect::<Vec<_>>());
+        }
+        keys
+    }
+
+    /// Keys a document number looks up in a source index.
+    pub fn lookup_keys(&self) -> Vec<String> {
+        let sign = if self.negative { "-" } else { "" };
+        self.values().map(|v| format!("{sign}{v}")).collect()
     }
 }
 
@@ -123,6 +153,10 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
             }
         }
         let end = i;
+        // "-2.1" or "(-2.1)", not "10-20", "BGE-3" or "x-2".
+        let negative = start > 0
+            && chars[start - 1] == '-'
+            && (start == 1 || !chars[start - 2].is_alphanumeric());
         let glued_left = start > 0 && {
             let p = chars[start - 1];
             is_letter(p)
@@ -166,6 +200,7 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
             glued_left,
             glued_right,
             dotted,
+            negative,
         });
     }
     out
@@ -230,6 +265,16 @@ mod tests {
         assert_eq!(one("2.5 bn").scaled, None);
         assert_eq!(one("2.5bn").scaled.as_deref(), Some("2500000000"));
         assert!(!one("3x faster").glued_right);
+    }
+
+    #[test]
+    fn minus_signs() {
+        assert!(one("fell to -2.1").negative);
+        assert!(one("(-0.5)").negative);
+        assert_eq!(one("(-0.5)").lookup_keys(), ["-0.5"]);
+        assert_eq!(one("-2.5k").index_keys(), ["2.5", "2500", "-2.5", "-2500"]);
+        let chars: Vec<char> = "10-20 BGE-3".chars().collect();
+        assert!(scan(&chars).iter().all(|t| !t.negative));
     }
 
     #[test]

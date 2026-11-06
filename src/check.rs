@@ -523,18 +523,18 @@ impl<'a> Ctx<'a> {
             .filter(|&&r| self.p.texts_of(r).is_empty())
             .map(|&r| self.key(r))
             .collect();
-        let mut best: Option<(f64, &TextEntry, Arc<IndexedText>, Approx, &str)> = None;
+        let mut best: Option<BestMatch> = None;
         for &r in refs {
             for (entry, text) in self.p.texts_of(r) {
                 let seg_strs: Vec<String> = segments.iter().map(|s| s.iter().collect()).collect();
-                // Exact, in order.
+                // Exact, in order, and not cutting a word or number of the source.
                 let mut pos = 0;
                 let mut in_order = true;
                 let mut all = true;
                 for s in &seg_strs {
-                    match text.find_exact(s, pos) {
+                    match text.find_bounded(s, pos) {
                         Some(p) => pos = p + s.chars().count(),
-                        None if text.find_exact(s, 0).is_some() => in_order = false,
+                        None if text.find_bounded(s, 0).is_some() => in_order = false,
                         None => all = false,
                     }
                 }
@@ -542,22 +542,30 @@ impl<'a> Ctx<'a> {
                     self.stats.quotes_supported += 1;
                     return;
                 }
-                // Approximate: the worst segment decides.
+                // Approximate: the worst segment decides. Anything short of a
+                // bounded exact match scores below 1.
                 let mut worst: Option<Approx> = None;
+                let mut cuts = false;
                 for (seg, s) in segments.iter().zip(&seg_strs) {
-                    let hit = match text.find_exact(s, 0) {
-                        Some(p) => Some(Approx {
-                            similarity: 1.0,
-                            start: p,
-                            end: p + seg.len(),
-                        }),
-                        None => worst_chunk(&text, seg),
+                    let exact = |p: usize, similarity: f64| Approx {
+                        similarity,
+                        start: p,
+                        end: p + seg.len(),
                     };
-                    let hit = hit.unwrap_or(Approx {
-                        similarity: 0.0,
-                        start: 0,
-                        end: 0,
-                    });
+                    let hit = if let Some(p) = text.find_bounded(s, 0) {
+                        exact(p, 1.0)
+                    } else if let Some(p) = text.find_exact(s, 0) {
+                        cuts = true;
+                        exact(p, 0.99)
+                    } else {
+                        let mut hit = worst_chunk(&text, seg).unwrap_or(Approx {
+                            similarity: 0.0,
+                            start: 0,
+                            end: 0,
+                        });
+                        hit.similarity = hit.similarity.min(0.99);
+                        hit
+                    };
                     if worst.is_none_or(|w| hit.similarity < w.similarity) {
                         worst = Some(hit);
                     }
@@ -566,8 +574,17 @@ impl<'a> Ctx<'a> {
                 if all && !in_order {
                     w.similarity = w.similarity.min(0.99);
                 }
-                if best.as_ref().is_none_or(|b| w.similarity > b.0) {
-                    best = Some((w.similarity, entry, text, w, self.key(r)));
+                if best
+                    .as_ref()
+                    .is_none_or(|b| w.similarity > b.hit.similarity)
+                {
+                    best = Some(BestMatch {
+                        entry,
+                        text,
+                        hit: w,
+                        key: self.key(r),
+                        cuts,
+                    });
                 }
             }
         }
@@ -578,7 +595,18 @@ impl<'a> Ctx<'a> {
             json!(refs.iter().map(|&r| self.key(r)).collect::<Vec<_>>()),
         );
         let mut evidence = Vec::new();
-        if let Some((sim, entry, text, hit, key)) = &best {
+        if let Some(BestMatch {
+            entry,
+            text,
+            hit,
+            key,
+            cuts,
+        }) = &best
+        {
+            let sim = &hit.similarity;
+            if *cuts {
+                data.insert("cuts_token".into(), json!(true));
+            }
             let (s, e) = text.skel_span(hit.start, hit.end);
             let src_line = text.line_of(s);
             let excerpt = text.excerpt(s, e, self.p.cfg.quotes.excerpt_chars);
@@ -607,20 +635,25 @@ impl<'a> Ctx<'a> {
         }
         let keys: Vec<&str> = refs.iter().map(|&r| self.key(r)).collect();
         let (sev, msg) = match &best {
-            Some((sim, ..)) if *sim >= self.p.cfg.quotes.error_below => (
+            Some(b) if b.hit.similarity >= self.p.cfg.quotes.error_below => (
                 Severity::Warn,
                 format!(
-                    "quoted text is not verbatim in the source text of {}; closest match similarity {:.2}",
+                    "quoted text is not verbatim in the source text of {}; closest match similarity {:.2}{}",
                     refs_list(&keys),
-                    sim
+                    b.hit.similarity,
+                    if b.cuts {
+                        " (the match starts or ends inside a word or number of the source)"
+                    } else {
+                        ""
+                    }
                 ),
             ),
-            Some((sim, ..)) => (
+            Some(b) => (
                 Severity::Error,
                 format!(
                     "quoted text not found in the source text of {}; closest match similarity {:.2}",
                     refs_list(&keys),
-                    sim
+                    b.hit.similarity
                 ),
             ),
             None => (
@@ -687,7 +720,8 @@ impl<'a> Ctx<'a> {
                     continue;
                 }
             }
-            let shown: String = chars[tok.start..tok.end].iter().collect::<String>()
+            let shown: String = if tok.negative { "-" } else { "" }.to_string()
+                + &chars[tok.start..tok.end].iter().collect::<String>()
                 + if tok.percent { "%" } else { "" };
             let context = context_words(&chars, tok.start, tok.end);
             out.push(DocNumber {
@@ -717,7 +751,7 @@ impl<'a> Ctx<'a> {
             self.stats.numbers_checked += 1;
             if texts
                 .iter()
-                .any(|(_, _, t)| n.tok.values().any(|v| t.has_number(v)))
+                .any(|(_, _, t)| n.tok.lookup_keys().iter().any(|v| t.has_number(v)))
             {
                 self.stats.numbers_found += 1;
                 continue;
@@ -746,7 +780,7 @@ impl<'a> Ctx<'a> {
             let mut data = Map::new();
             data.insert("number".into(), json!(n.shown));
             data.insert("sentence".into(), json!(sentence));
-            data.insert("value".into(), json!(n.tok.value));
+            data.insert("value".into(), json!(n.tok.signed()));
             data.insert("references".into(), json!(keys));
             data.insert("context".into(), json!(n.context));
             data.insert("nearest".into(), Value::Array(nearest));
@@ -1205,6 +1239,16 @@ impl<'a> Ctx<'a> {
             data,
         );
     }
+}
+
+/// The closest placement of a quotation in one cited source text.
+struct BestMatch<'a> {
+    entry: &'a TextEntry,
+    text: Arc<IndexedText>,
+    hit: Approx,
+    key: &'a str,
+    /// The placement is exact but starts or ends inside a source token.
+    cuts: bool,
 }
 
 struct ClaimKind {

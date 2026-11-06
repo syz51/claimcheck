@@ -53,11 +53,8 @@ impl IndexedText {
         let numbers = numbers::scan(&chars);
         let mut number_index: HashMap<String, Vec<u32>> = HashMap::new();
         for (i, t) in numbers.iter().enumerate() {
-            for v in t.values() {
-                number_index
-                    .entry(v.to_string())
-                    .or_default()
-                    .push(i as u32);
+            for v in t.index_keys() {
+                number_index.entry(v).or_default().push(i as u32);
             }
         }
         let mut words: HashMap<String, Vec<u32>> = HashMap::new();
@@ -107,6 +104,68 @@ impl IndexedText {
         let from_byte = from_byte.min(self.skel_str.len());
         let pos = self.skel_str.get(from_byte..)?.find(needle)?;
         Some(self.skel_byte_to_char[from_byte + pos] as usize)
+    }
+
+    /// Like [`IndexedText::find_exact`], but only occurrences that start and
+    /// end at token boundaries: a quotation must not cut a word or a number of
+    /// the source (`reaches 12` inside `reaches 12.3 %`).
+    pub fn find_bounded(&self, needle: &str, from: usize) -> Option<usize> {
+        let len = needle.chars().count();
+        let mut from = from;
+        while let Some(p) = self.find_exact(needle, from) {
+            if self.bounded(p, p + len) {
+                return Some(p);
+            }
+            from = p + 1;
+        }
+        None
+    }
+
+    /// Whether skeleton chars `start..end` begin and end at token boundaries.
+    pub fn bounded(&self, start: usize, end: usize) -> bool {
+        if start >= end || end > self.skel.len() {
+            return false;
+        }
+        (start == 0 || !self.joined(start - 1, start))
+            && (end == self.skel.len() || !self.joined(end - 1, end))
+    }
+
+    /// Whether adjacent skeleton chars `a` and `a + 1` belong to one token of
+    /// the original text, so that a match may not begin or end between them.
+    fn joined(&self, a: usize, b: usize) -> bool {
+        let (x, y) = (self.skel[a], self.skel[b]);
+        let numeric = |c: char| c.is_ascii_digit() || matches!(c, '.' | ',' | ' ' | '-' | '%');
+        // A digit next to a digit, decimal point, separator, sign or percent
+        // sign continues the same number: "12" of "12.3 %" or "2.1" of "-2.1".
+        if (x.is_ascii_digit() && numeric(y)) || (y.is_ascii_digit() && numeric(x)) {
+            return true;
+        }
+        if !(x.is_alphanumeric() && y.is_alphanumeric())
+            || normalize::is_cjk(x)
+            || normalize::is_cjk(y)
+        {
+            return false;
+        }
+        // Two letters or digits: one word unless the original text separates them.
+        let (oa, ob) = (self.skel_off[a] as usize, self.skel_off[b] as usize);
+        if oa == ob {
+            return true; // one original character, such as a ligature
+        }
+        let after_a = oa + self.text[oa..].chars().next().map_or(0, char::len_utf8);
+        let gap: String = self.text[after_a.min(ob)..ob]
+            .chars()
+            .filter(|c| {
+                !unicode_normalization::char::is_combining_mark(*c)
+                    && !matches!(
+                        *c,
+                        '\u{00AD}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
+                    )
+            })
+            .collect();
+        let hyphenation = gap
+            .strip_prefix(['-', '\u{2010}', '\u{2011}'])
+            .is_some_and(|rest| rest.contains('\n') && rest.chars().all(char::is_whitespace));
+        gap.is_empty() || hyphenation
     }
 
     pub fn grams(&self, g: &[char; GRAM]) -> &[u32] {
@@ -194,11 +253,12 @@ impl IndexedText {
         let mut out: Vec<(String, usize)> = Vec::new();
         for (_, _, i) in ranked {
             let t = &self.numbers[i];
-            if out.iter().any(|(v, _)| *v == t.value) {
+            let value = t.signed();
+            if out.iter().any(|(v, _)| *v == value) {
                 continue;
             }
             let off = self.norm[t.start].off as usize;
-            out.push((t.value.clone(), self.line_of(off)));
+            out.push((value, self.line_of(off)));
             if out.len() == limit {
                 break;
             }
@@ -286,11 +346,38 @@ mod tests {
     }
 
     #[test]
+    fn bounded_search_does_not_cut_words_or_numbers() {
+        let t = IndexedText::new(
+            "Our method reaches 12.3 % accuracy on the catalog, a retriev-\nal gain of \u{2212}2.1 points.".into(),
+        );
+        let find = |q: &str| t.find_bounded(&normalize::skeleton_str(q), 0);
+        assert!(find("our method reaches 12.3 %").is_some());
+        assert!(find("our method reaches 12").is_none());
+        // The percent sign belongs to the number.
+        assert!(find("reaches 12.3").is_none());
+        assert!(find("12.3% accuracy").is_some());
+        assert!(find("he catalog").is_none());
+        assert!(find("on the cat").is_none());
+        assert!(find("retriev").is_none());
+        assert!(find("retrieval gain").is_some());
+        assert!(find("gain of 2.1 points").is_none());
+        assert!(find("gain of -2.1 points").is_some());
+        let t = IndexedText::new("本研究では金融文書の検索精度を改善する。".into());
+        assert!(
+            t.find_bounded(&normalize::skeleton_str("検索精度を改善"), 0)
+                .is_some()
+        );
+    }
+
+    #[test]
     fn numbers_are_indexed_canonically() {
         let t = IndexedText::new("Accuracy reaches 12.30 % on 1,234 queries (Table 2).".into());
         assert!(t.has_number("12.3"));
         assert!(t.has_number("1234"));
         assert!(!t.has_number("12.4"));
+        let t = IndexedText::new("The gap is \u{2212}2.1 points.".into());
+        assert!(t.has_number("-2.1") && t.has_number("2.1"));
+        assert!(!IndexedText::new("The gap is 2.1 points.".into()).has_number("-2.1"));
     }
 
     #[test]

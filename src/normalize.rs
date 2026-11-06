@@ -10,7 +10,9 @@
 //!   (plus a few meaning-bearing symbols such as `%` and decimal points). It
 //!   removes whitespace, line-break hyphenation and punctuation, so PDF
 //!   extraction artifacts such as `retriev-\nal`, `ﬁ`, missing or doubled
-//!   spaces and curly quotes do not prevent an exact match.
+//!   spaces and curly quotes do not prevent an exact match. Minus signs and
+//!   dashes between digits are kept, so `-2.1` differs from `2.1` and
+//!   `10-20` from `1020`.
 
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
@@ -91,7 +93,8 @@ fn is_kept_symbol(c: char) -> bool {
 ///
 /// A decimal point between digits is kept so that `1.5` and `15` differ; a
 /// comma is dropped only when it separates thousands. Whitespace between two
-/// digits becomes a single space so that `1 5` and `15` differ.
+/// digits becomes a single space so that `1 5` and `15` differ. A dash is kept
+/// as `-` when it is a minus sign (`(-2.1)`) or joins two numbers (`10 - 20`).
 pub fn skeleton(chars: &[NChar]) -> (Vec<char>, Vec<u32>) {
     let mut out = Vec::with_capacity(chars.len());
     let mut offs = Vec::with_capacity(chars.len());
@@ -100,6 +103,22 @@ pub fn skeleton(chars: &[NChar]) -> (Vec<char>, Vec<u32>) {
             .iter()
             .map(|n| n.c)
             .find(|c| *c != ' ' && *c != '\n')
+    };
+    let prev_non_space = |before: usize| {
+        chars[..before]
+            .iter()
+            .rev()
+            .map(|n| n.c)
+            .find(|c| *c != ' ' && *c != '\n')
+    };
+    let digit_at = |i: usize| chars.get(i).is_some_and(|n| n.c.is_ascii_digit());
+    let numeric_dash = |i: usize| {
+        let starts_number =
+            digit_at(i + 1) || (chars.get(i + 1).is_some_and(|n| n.c == '.') && digit_at(i + 2));
+        let minus = starts_number && (i == 0 || !chars[i - 1].c.is_alphanumeric());
+        let between = prev_non_space(i).is_some_and(|c| c.is_ascii_digit())
+            && next_non_space(i + 1).is_some_and(|c| c.is_ascii_digit());
+        minus || between
     };
     for (i, n) in chars.iter().enumerate() {
         let c = n.c;
@@ -112,6 +131,9 @@ pub fn skeleton(chars: &[NChar]) -> (Vec<char>, Vec<u32>) {
             }
         } else if is_kept_symbol(c) {
             out.push(c);
+            offs.push(n.off);
+        } else if c == '-' && numeric_dash(i) {
+            out.push('-');
             offs.push(n.off);
         } else if c == '.' && prev_digit && next.is_some_and(|d| d.is_ascii_digit()) {
             out.push('.');
@@ -217,6 +239,21 @@ mod tests {
         assert_ne!(skeleton_str("1 5"), skeleton_str("15"));
         assert_eq!(skeleton_str("1,234 rows"), skeleton_str("1234 rows"));
         assert_ne!(skeleton_str("1,2"), skeleton_str("12"));
+    }
+
+    #[test]
+    fn minus_signs_and_numeric_dashes_are_kept() {
+        assert_ne!(
+            skeleton_str("fell by \u{2212}2.1 points"),
+            skeleton_str("fell by 2.1 points")
+        );
+        assert_eq!(skeleton_str("(\u{2212}2.1)"), skeleton_str("(-2.1)"));
+        assert_eq!(skeleton_str("10 \u{2013} 20"), skeleton_str("10-20"));
+        assert_ne!(skeleton_str("10-20"), skeleton_str("1020"));
+        assert_eq!(
+            skeleton_str("state-of-the-art BGE-M3"),
+            "stateoftheartbgem3"
+        );
     }
 
     #[test]

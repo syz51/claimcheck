@@ -472,3 +472,50 @@ fn cli_exit_codes_and_jsonl() {
         String::from_utf8_lossy(&out.stderr).contains("references.jsonl:1: unsupported schema")
     );
 }
+
+#[test]
+fn quote_that_cuts_a_number_is_not_verbatim() {
+    let fx = basic();
+    let f = fx.check("They write that \"our method reaches 12\" [1].\n");
+    assert_eq!(rules(&f), [(Rule::QuoteNotFound, Severity::Warn)], "{f:#?}");
+    assert_eq!(f[0].data["cuts_token"], true);
+    assert!(
+        f[0].message.contains("inside a word or number"),
+        "{}",
+        f[0].message
+    );
+    // A quotation that starts inside a word is not verbatim either.
+    let f = fx.check("They write that \"nancial evidence retrieval\" [1].\n");
+    assert_eq!(rules(&f), [(Rule::QuoteNotFound, Severity::Warn)], "{f:#?}");
+    // The whole number, with its percent sign, is verbatim.
+    assert!(
+        fx.check("They write that \"our method reaches 12.3 % accuracy\" [1].\n")
+            .is_empty()
+    );
+}
+
+#[test]
+fn minus_signs_are_significant() {
+    let text = "The change in recall was \u{2212}2.1 points, and precision rose 0.5 points.\n";
+    let fx = Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[("texts/1.txt", text)],
+        "",
+    );
+    let f = fx.check("They report that \"the change in recall was 2.1 points\" [1].\n");
+    assert_eq!(rules(&f), [(Rule::QuoteNotFound, Severity::Warn)], "{f:#?}");
+    assert!(
+        fx.check("They report that \"the change in recall was -2.1 points\" [1].\n")
+            .is_empty()
+    );
+    // A negative number needs a negative source number; an unsigned one does not.
+    let f = fx.check("Precision changed by -0.5 points [1].\n");
+    assert_eq!(
+        rules(&f),
+        [(Rule::NumberNotInSource, Severity::Warn)],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["number"], "-0.5");
+    assert!(fx.check("Recall changed by -2.1 points [1].\n").is_empty());
+    assert!(fx.check("Recall fell by 2.1 points [1].\n").is_empty());
+}

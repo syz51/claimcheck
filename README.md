@@ -190,7 +190,9 @@ Both sides are normalized before comparison:
 - quote and dash variants unified;
 - soft hyphens and zero-width characters dropped.
 
-The comparison then uses a skeleton of lowercase letters, digits and meaning-bearing symbols (`% < > = + ± × ≤ ≥ ≈ $ € £ ¥`). Whitespace, punctuation and line-break hyphenation (`evi-\ndence`) disappear, but the skeleton keeps decimal points, so `1.5` and `15` stay distinct. A quotation is verbatim when its skeleton occurs exactly.
+The comparison then uses a skeleton of lowercase letters, digits and meaning-bearing symbols (`% < > = + ± × ≤ ≥ ≈ $ € £ ¥`). Whitespace, punctuation and line-break hyphenation (`evi-\ndence`) disappear. The skeleton keeps decimal points, minus signs and dashes between digits, so `1.5` and `15`, `−2.1` and `2.1`, and `10–20` and `1020` stay distinct.
+
+A quotation is verbatim when its skeleton occurs exactly and the occurrence neither starts nor ends inside a word or number of the source. "our method reaches 12" is not verbatim in "Our method reaches 12.3 % accuracy", and neither is "reaches 12.3": the percent sign belongs to the number. Chinese and Japanese text has no word boundaries, so only numbers are checked there. A quotation that occurs only by cutting a token is reported as a warning with similarity 0.99, and its `data` has `cuts_token: true`.
 
 An ellipsis (`...`, `…`) or an editorial insertion in brackets (`[…]`, `[sic]`) splits a quotation into segments. Each segment must occur, in order. When a segment does not, it is located approximately. Candidate regions come from character-trigram votes, and the best placement is scored by edit distance as `similarity = 1 − distance / length`. The worst segment decides the result. The comparison is per character, so it works for Chinese and Japanese text.
 
@@ -200,7 +202,8 @@ A number in a sentence that cites a reference with text must occur in that text.
 
 - `1,234` = `1234`, `.5` = `0.5` and `12.30` = `12.3`;
 - `12.3 %` matches `12.3%`;
-- `1.2k`, `3M` and `4bn` also match their scaled values.
+- `1.2k`, `3M` and `4bn` also match their scaled values;
+- a negative number (`-2.1`, `(−2.1)`) needs a negative number in the source. An unsigned number ("fell by 2.1") matches either sign.
 
 These are not checked:
 
@@ -265,7 +268,7 @@ Entries under a reference-list heading are matched to the registry. The key come
 
 ## Limits
 
-- **Strings, not meaning.** A quotation that occurs verbatim is supported only in the sense that the words are in the source. `claimcheck` does not judge whether the source supports the claim made with them. Numbers are matched by value: the sign is ignored, and a number that occurs anywhere in the source counts as found.
+- **Strings, not meaning.** A quotation that occurs verbatim is supported only in the sense that the words are in the source. `claimcheck` does not judge whether the source supports the claim made with them. Numbers are matched by value, so a number that occurs anywhere in the source counts as found, even when it measures something else.
 - **Keyword heuristics.** Claim kinds and uncited claims come from keyword and number heuristics. Plans, design parameters, imperatives ("Keep 500 items in reserve") and negated statements can still be reported as uncited claims. Lower `uncited-claim` to `info` or turn it off where that is noise.
 - **Registry depth.** `depth-insufficient` is only as good as the registry's `depth`.
 - **Source texts.** Text extracted from PDFs may lose tables, formulas and reading order. A quotation from a table or a figure may then be reported as not found.

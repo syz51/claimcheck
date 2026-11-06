@@ -214,6 +214,8 @@ These are not checked:
 - reference numbers, `#N`, URLs, DOIs, arXiv ids, dates and times;
 - numbers inside code, links or quotations that are checked as quotations.
 
+A date, locator or identifier hides a number only when it covers the whole number. Dates need a plausible year, month and day, so `9999.99` and `55.1-58.4` are checked. Dates and locators never hide a percentage, a scaled number or a number with thousands separators, so "level 95%" and "rows 2,378" are checked.
+
 A sentence whose cited references have no text gets one `source-text-missing` finding listing its numbers.
 
 ### Claim kinds and depth

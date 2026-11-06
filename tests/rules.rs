@@ -519,3 +519,47 @@ fn minus_signs_are_significant() {
     assert!(fx.check("Recall changed by -2.1 points [1].\n").is_empty());
     assert!(fx.check("Recall fell by 2.1 points [1].\n").is_empty());
 }
+
+fn unmatched_numbers(fx: &Fixture, md: &str) -> Vec<String> {
+    fx.check(md)
+        .iter()
+        .filter(|f| f.rule == Rule::NumberNotInSource)
+        .map(|f| f.data["number"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn month_like_words_and_measurement_words_do_not_mask_numbers() {
+    let fx = basic();
+    for (md, want) in [
+        ("Error decreased 45.6% relative to BM25 [1].\n", "45.6%"),
+        ("Recall declined 345 points [1].\n", "345"),
+        ("The market grew 234 points [1].\n", "234"),
+        ("A novel 567 item benchmark [1].\n", "567"),
+        ("At significance level 0.05 the gain holds [1].\n", "0.05"),
+        ("At confidence level 95% the gain holds [1].\n", "95%"),
+        ("The table has rows 2,378 in total [1].\n", "2,378"),
+    ] {
+        assert_eq!(unmatched_numbers(&fx, md), [want], "{md}");
+    }
+    // Real dates, times and locators stay masked.
+    let md = "On Jan 5, 2026 at 10:30, Section 4.3 and rows 2-4 of 12/10/2026 [1].\n";
+    assert!(unmatched_numbers(&fx, md).is_empty(), "{md}");
+}
+
+#[test]
+fn large_decimals_and_decimal_ranges_are_not_dates() {
+    let fx = basic();
+    assert_eq!(
+        unmatched_numbers(&fx, "It costs 9999.99 dollars [1].\n"),
+        ["9999.99"]
+    );
+    assert_eq!(
+        unmatched_numbers(&fx, "Scores ranged 55.1-58.4 across runs [1].\n"),
+        ["55.1", "58.4"]
+    );
+    assert_eq!(
+        unmatched_numbers(&fx, "Scores ranged 12.1-15.4 across runs [1].\n"),
+        ["12.1", "15.4"]
+    );
+}

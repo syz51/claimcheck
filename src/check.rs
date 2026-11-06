@@ -681,14 +681,14 @@ impl<'a> Ctx<'a> {
             }
         }
         char_of_byte.push(chars.len());
-        let mut masked = vec![false; chars.len()];
-        for re in MASKS.iter() {
-            for m in re.find_iter(&nstr) {
-                for flag in &mut masked[char_of_byte[m.start()]..char_of_byte[m.end()]] {
-                    *flag = true;
-                }
-            }
-        }
+        let masks: Vec<(MaskKind, usize, usize)> = MASKS
+            .iter()
+            .flat_map(|(kind, re)| {
+                re.find_iter(&nstr)
+                    .map(|m| (*kind, char_of_byte[m.start()], char_of_byte[m.end()]))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         let cfg = &self.p.cfg.numbers;
         let block_index = |n: &NChar| map[n.off as usize];
         let mut out = Vec::new();
@@ -696,7 +696,9 @@ impl<'a> Ctx<'a> {
             if tok.glued_left
                 || tok.glued_right
                 || tok.dotted
-                || masked[tok.start..tok.end].iter().any(|m| *m)
+                || masks
+                    .iter()
+                    .any(|&(k, s, e)| s <= tok.start && tok.end <= e && k.hides(&tok))
             {
                 continue;
             }
@@ -1370,26 +1372,56 @@ fn context_words(chars: &[char], start: usize, end: usize) -> Vec<String> {
 static YEAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b(?:1[89]\d\d|20\d\d)\b").expect("valid regex"));
 
-/// Spans whose digits are identifiers, dates or locators, not quantities.
-static MASKS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    const MONTH: &str = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?";
-    const LOC: &str = r"[a-z]?\.?\d+(?:\.\d+)*[a-z]?";
-    let section_words = r"sections?|secs?\.|tables?|tabs?\.|figures?|figs?\.|appendix|appendices|app\.|equations?|eqs?\.|algorithms?|alg\.|chapters?|ch\.|lemmas?|theorems?|definitions?|propositions?|corollar(?:y|ies)|steps?|lines?|pages?|pp?\.|nos?\.|refs?\.|references?|items?|versions?|v\.|examples?|rows?|columns?|cols?\.|questions?|q|rq|footnotes?|notes?|exhibits?|parts?|annex|rules?|articles?|art\.|paragraphs?|para\.|claims?|hypothes[ie]s|stages?|phases?|rounds?|runs?|iterations?|epochs?|layers?|level|tier|week|day|fold|seed|sources?|ids?|identifiers?";
+/// What a masked span is; it decides which numbers the mask may hide.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MaskKind {
+    /// URLs, DOIs, arXiv ids, `#N`, `10-K`: hide any number inside.
+    Identifier,
+    /// Dates and times: hide plain integers only.
+    Date,
+    /// Section, table and other locators: hide integers and dotted
+    /// numbers such as `3.2`, never percentages or thousands.
+    Locator,
+}
+
+impl MaskKind {
+    fn hides(self, tok: &NumTok) -> bool {
+        let quantity = tok.percent || tok.separated || tok.scaled.is_some();
+        match self {
+            MaskKind::Identifier => true,
+            MaskKind::Date => !quantity && !tok.decimal,
+            MaskKind::Locator => !quantity,
+        }
+    }
+}
+
+/// Spans whose digits are identifiers, dates or locators, not quantities. A
+/// mask hides a number only when it covers the whole number.
+static MASKS: LazyLock<Vec<(MaskKind, Regex)>> = LazyLock::new(|| {
+    const MONTH: &str = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?";
+    const DAY: &str = r"(?:0?[1-9]|[12]\d|3[01])";
+    const MON: &str = r"(?:0?[1-9]|1[0-2])";
+    const YEAR: &str = r"(?:19|20)\d{2}";
+    const LOC: &str = r"[a-z]?\.?[1-9]\d*(?:\.\d+)*[a-z]?";
+    let section_words = r"sections?|secs?\.|tables?|tabs?\.|figures?|figs?\.|appendix|appendices|app\.|equations?|eqs?\.|algorithms?|alg\.|chapters?|ch\.|lemmas?|theorems?|definitions?|propositions?|corollar(?:y|ies)|steps?|lines?|pages?|pp?\.|nos?\.|refs?\.|references?|items?|versions?|v\.|examples?|rows?|columns?|cols?\.|questions?|q|rq|footnotes?|notes?|exhibits?|parts?|annex|rules?|articles?|art\.|paragraphs?|para\.|claims?|hypothes[ie]s|stages?|phases?|rounds?|runs?|iterations?|epochs?|layers?|seed|sources?|ids?|identifiers?";
+    use MaskKind::{Date, Identifier, Locator};
     [
-        r"(?i)\b(?:https?://|www\.)\S+".to_string(),
-        r"\b10\.\d{4,9}/\S+".to_string(),
-        r"\b\d{4}\.\d{4,5}(?:v\d+)?\b".to_string(),
-        r"\b\d{4}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b".to_string(),
-        r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b".to_string(),
-        r"\b\d{1,2}:\d{2}(?::\d{2})?\b".to_string(),
-        r"\b\d{1,2}-[A-Z]\b".to_string(),
-        format!(r"(?i)\b\d{{1,2}}(?:st|nd|rd|th)?\s*{MONTH}(?:,?\s*\d{{4}})?"),
-        format!(r"(?i)\b{MONTH}\s*\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s*\d{{4}})?\b"),
-        format!(r"(?i)(?:§+\s*|\b(?:{section_words})\s*)(?:{LOC})(?:\s*(?:[-,&/]|and|to|or)\s*(?:{LOC}))*"),
-        r"[#№]\s*\d+".to_string(),
+        (Identifier, r"(?i)\b(?:https?://|www\.)\S+".to_string()),
+        (Identifier, r"\b10\.\d{4,9}/\S+".to_string()),
+        (Identifier, r"\b\d{4}\.\d{4,5}(?:v\d+)?\b".to_string()),
+        (Identifier, r"[#№]\s*\d+".to_string()),
+        (Identifier, r"\b\d{1,2}-[A-Z]\b".to_string()),
+        // 2026-10-10, 2026/10, 2026.10.10
+        (Date, format!(r"\b{YEAR}(?:[-/]{MON}(?:[-/]{DAY})?|\.{MON}\.{DAY})\b")),
+        // 10/10/2026, 10-10-26, 10.10.2026
+        (Date, format!(r"\b(?:{DAY}/{DAY}/|{DAY}-{DAY}-|{DAY}\.{DAY}\.)(?:{YEAR}|\d{{2}})\b")),
+        (Date, r"\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b".to_string()),
+        (Date, format!(r"(?i)\b{DAY}(?:st|nd|rd|th)?\s*{MONTH}(?:,?\s*{YEAR})?\b")),
+        (Date, format!(r"(?i)\b{MONTH}\s*{DAY}(?:st|nd|rd|th)?(?:,?\s*{YEAR})?\b")),
+        (Locator, format!(r"(?i)(?:§+\s*|\b(?:{section_words})\s*)(?:{LOC})(?:\s*(?:[-,&/]|and|to|or)\s*(?:{LOC}))*")),
     ]
-    .iter()
-    .map(|p| Regex::new(p).expect("valid mask regex"))
+    .into_iter()
+    .map(|(k, p)| (k, Regex::new(&p).expect("valid mask regex")))
     .collect()
 });
 

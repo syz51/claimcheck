@@ -260,7 +260,7 @@ A label is the leading `Label:` or `**Label:**` of a paragraph or list item. Wit
 
 ### Reference lists
 
-Entries under a reference-list heading are matched to the registry. The key comes from a leading citation such as `[N]` or `[@key]`, or from the number of an ordered-list item (`N.`). The entry text must contain the registry title or match it with at least `title_similarity`. It must also contain the year and the first author's surname, when the registry knows them.
+Entries under a reference-list heading are matched to the registry. The key comes from a leading citation such as `[N]` or `[@key]`, or from the number of an ordered-list item (`N.`). The entry text must contain the registry title or match it with at least `title_similarity`. It must also contain the year and the first author's surname, when the registry knows them. An entry with no year at all is a mismatch, a letter suffix counts as the year ("2025a" is 2025), and digits inside identifiers (`arXiv:2012.01234`, `10.1145/2009916`) are not years.
 
 ## Output: `rf.finding/1`
 

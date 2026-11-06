@@ -1203,11 +1203,10 @@ impl<'a> Ctx<'a> {
             }
         }
         if let Some(year) = r.year {
-            let years: Vec<i64> = YEAR
-                .find_iter(&text)
-                .filter_map(|m| m.as_str().parse().ok())
-                .collect();
-            if !years.is_empty() && !years.contains(&year) {
+            let years = entry_years(&text);
+            if years.is_empty() {
+                problems.push(format!("year {year} is missing"));
+            } else if !years.contains(&year) {
                 problems.push(format!(
                     "year {} differs from registry year {year}",
                     years
@@ -1376,8 +1375,26 @@ fn context_words(chars: &[char], start: usize, end: usize) -> Vec<String> {
     out
 }
 
+/// A year in a reference-list entry, with an optional disambiguating letter
+/// ("2025a").
 static YEAR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(?:1[89]\d\d|20\d\d)\b").expect("valid regex"));
+    LazyLock::new(|| Regex::new(r"\b(1[89]\d\d|20\d\d)[a-z]?\b").expect("valid regex"));
+
+/// The years in a reference-list entry, skipping digits inside identifiers
+/// such as `arXiv:2012.01234` or `10.1145/2009916`.
+fn entry_years(text: &str) -> Vec<i64> {
+    let b = text.as_bytes();
+    YEAR.captures_iter(text)
+        .filter_map(|c| {
+            let m = c.get(1)?;
+            let before = m.start().checked_sub(1).map(|i| b[i]);
+            let after = &b[m.end()..];
+            let in_id = matches!(before, Some(b'.' | b'/' | b':'))
+                || matches!(after, [b'/', ..] | [b'.', b'0'..=b'9', ..]);
+            if in_id { None } else { m.as_str().parse().ok() }
+        })
+        .collect()
+}
 
 /// What a masked span is; it decides which numbers the mask may hide.
 #[derive(Clone, Copy, PartialEq, Eq)]

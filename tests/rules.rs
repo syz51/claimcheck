@@ -372,6 +372,28 @@ fn reference_list_entries() {
         "{}",
         f[0].message
     );
+    // A letter suffix is part of the year; a missing year is a mismatch.
+    let suffixed = "## References\n\n[7] Example, A. Retrieval for annual reports. 2025a.\n";
+    assert!(fx.check(suffixed).is_empty(), "{:#?}", fx.check(suffixed));
+    let suffixed = "## References\n\n[7] Example, A. Retrieval for annual reports. 2019b.\n";
+    let f = fx.check(suffixed);
+    assert!(f[0].message.contains("year 2019"), "{}", f[0].message);
+    let no_year = "## References\n\n[7] Example, A. Retrieval for annual reports.\n";
+    let f = fx.check(no_year);
+    assert_eq!(rules(&f), [(Rule::ReferenceListMismatch, Severity::Error)]);
+    assert!(
+        f[0].message.contains("year 2025 is missing"),
+        "{}",
+        f[0].message
+    );
+    // Digits inside an identifier are not the year.
+    let id_only = "## References\n\n[7] Example, A. Retrieval for annual reports. https://doi.org/10.1000/2025.5\n";
+    let f = fx.check(id_only);
+    assert!(
+        f[0].message.contains("year 2025 is missing"),
+        "{}",
+        f[0].message
+    );
     let wrong_title = "## Bibliography\n\n1. Example, A. Graph networks for chemistry. 2025.\n";
     let f = fx.check(wrong_title);
     assert_eq!(rules(&f), [(Rule::ReferenceListMismatch, Severity::Error)]);

@@ -33,7 +33,9 @@ claimcheck check [PATHS]... [--config research.toml] [--registry references.json
 claimcheck rules
 ```
 
-`PATHS` are Markdown files or directories. Directories are searched recursively for `.md` and `.markdown` files, and hidden entries are skipped. When no path is given, the `paths` from the configuration are used.
+`PATHS` are Markdown files or directories. Directories are searched recursively for `.md` and `.markdown` files, and hidden entries are skipped. When no path is given, the `paths` from the configuration are used; if those are empty too (the default), `check` exits with status 2.
+
+The search follows symbolic links, but walks each directory only once, so a link loop cannot repeat files. A file reached by several paths is checked once. A link that cannot be followed (dangling, or a loop the operating system refuses) is an error, since skipping it could silently hide documents; add it to `exclude` to skip it.
 
 - **Text output** (the default) prints one finding per line as `file:line: severity[rule] message`. Indented lines give the source evidence, the quotation and the closest match. Excerpts are about 200 characters.
 - **`--format jsonl`** prints one `rf.finding/1` record per line (schema below).
@@ -80,8 +82,9 @@ The registry is located by the first of these that is set:
 ```toml
 [claimcheck]
 registry = "references.jsonl"
-paths = ["docs"]          # checked when no path is given on the command line
-exclude = []              # paths skipped while walking directories
+paths = []                # checked when no path is given, e.g. ["docs"]
+exclude = []              # paths skipped while walking directories; compared after
+                          # resolving symlinks, `.` and `..`, so `check ../docs` honours them
 
 [claimcheck.citations]
 # Regexes with named groups: `key`, or `keys` (a list such as "3, 5-7" or

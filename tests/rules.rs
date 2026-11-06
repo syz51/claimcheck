@@ -671,3 +671,77 @@ fn kinds_only_claims_config_loads() {
     let err = Config::from_toml(&root, &bad).unwrap_err().to_string();
     assert!(err.contains("unknown claim kind `method`"), "{err}");
 }
+
+fn names(root: &Path, files: &[PathBuf]) -> Vec<String> {
+    let root = root.canonicalize().unwrap();
+    files
+        .iter()
+        .map(|f| {
+            let f = f.canonicalize().unwrap();
+            f.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_loops_are_walked_once_and_broken_links_are_errors() {
+    use std::os::unix::fs::symlink;
+    let root = temp_project(&[("docs/a.md", "A.\n"), ("docs/sub/b.md", "B.\n")]);
+    symlink("..", root.join("docs/sub/up")).unwrap();
+    symlink("sub/b.md", root.join("docs/b-link.md")).unwrap();
+    let files =
+        claimcheck::collect_inputs(&[root.join("docs"), root.join("docs/sub")], &[]).unwrap();
+    assert_eq!(names(&root, &files), ["docs/a.md", "docs/sub/b.md"]);
+
+    symlink("missing", root.join("docs/sub/gone")).unwrap();
+    let err = claimcheck::collect_inputs(&[root.join("docs")], &[])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("gone"), "{err}");
+    // An excluded broken link is not followed.
+    let files =
+        claimcheck::collect_inputs(&[root.join("docs")], &[root.join("docs/sub/gone")]).unwrap();
+    assert_eq!(files.len(), 2);
+}
+
+#[test]
+fn exclude_applies_to_relative_and_dotted_inputs() {
+    let root = temp_project(&[
+        (
+            "research.toml",
+            "[claimcheck]\nexclude = [\"docs/drafts\", \"./docs/old/../tmp.md\"]\n",
+        ),
+        ("references.jsonl", ""),
+        ("docs/a.md", "A.\n"),
+        ("docs/drafts/x.md", "Cites [8].\n"),
+        ("docs/tmp.md", "Cites [8].\n"),
+        ("sub/keep", ""),
+    ]);
+    let bin = env!("CARGO_BIN_EXE_claimcheck");
+    for (cwd, arg) in [("sub", "../docs"), (".", "./docs/../docs")] {
+        let out = Command::new(bin)
+            .args(["check", arg, "--summary"])
+            .current_dir(root.join(cwd))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(0), "{arg}: {stdout}");
+        assert!(stdout.contains("files 1"), "{arg}: {stdout}");
+    }
+}
+
+#[test]
+fn check_without_paths_is_a_usage_error() {
+    let root = temp_project(&[("research.toml", ""), ("references.jsonl", "")]);
+    let out = Command::new(env!("CARGO_BIN_EXE_claimcheck"))
+        .args(["check"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no input paths"));
+}

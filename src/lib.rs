@@ -4,8 +4,9 @@
 //! The binary is a thin wrapper around [`run`]; the modules are public so the
 //! rules can be tested and reused.
 
+use std::collections::HashSet;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -46,52 +47,131 @@ fn is_markdown(p: &Path) -> bool {
         .is_some_and(|e| matches!(e, "md" | "markdown"))
 }
 
-fn walk(dir: &Path, exclude: &[PathBuf], out: &mut Vec<PathBuf>) -> Result<(), Error> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| Error::new(format!("cannot read directory {}: {e}", dir.display())))?;
-    let mut paths: Vec<PathBuf> = Vec::new();
-    for entry in entries {
-        let entry = entry
+/// A path with symlinks, `.` and `..` resolved. A path that does not exist is
+/// resolved through its longest existing ancestor.
+fn resolve(p: &Path) -> PathBuf {
+    if let Ok(c) = p.canonicalize() {
+        return c;
+    }
+    let mut lexical = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(lexical.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                lexical.pop();
+            }
+            c => lexical.push(c),
+        }
+    }
+    let mut rest = Vec::new();
+    let mut base = lexical.as_path();
+    loop {
+        if let Ok(c) = base.canonicalize() {
+            return rest.iter().rev().fold(c, |acc, name| acc.join(name));
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                base = parent;
+            }
+            _ => return lexical,
+        }
+    }
+}
+
+struct Walk {
+    /// Resolved `exclude` entries.
+    exclude: Vec<PathBuf>,
+    /// Resolved directories already walked; stops symlink loops.
+    visited: HashSet<PathBuf>,
+    /// Resolved files already collected.
+    seen: HashSet<PathBuf>,
+    out: Vec<PathBuf>,
+}
+
+impl Walk {
+    fn excluded(&self, p: &Path) -> bool {
+        self.exclude.iter().any(|x| p.starts_with(x))
+    }
+
+    fn file(&mut self, p: PathBuf, resolved: PathBuf) {
+        if self.seen.insert(resolved) {
+            self.out.push(p);
+        }
+    }
+
+    /// Walks `dir` (as given) whose resolved path is `real`.
+    fn dir(&mut self, dir: &Path, real: PathBuf) -> Result<(), Error> {
+        if !self.visited.insert(real.clone()) {
+            return Ok(());
+        }
+        let entries = std::fs::read_dir(dir)
             .map_err(|e| Error::new(format!("cannot read directory {}: {e}", dir.display())))?;
-        paths.push(entry.path());
-    }
-    paths.sort();
-    for p in paths {
-        let hidden = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with('.'));
-        if hidden || exclude.iter().any(|x| p.starts_with(x)) {
-            continue;
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| Error::new(format!("cannot read directory {}: {e}", dir.display())))?;
+            names.push(entry.file_name());
         }
-        if p.is_dir() {
-            walk(&p, exclude, out)?;
-        } else if is_markdown(&p) {
-            out.push(p);
+        names.sort();
+        for name in names {
+            if name.to_str().is_some_and(|n| n.starts_with('.')) {
+                continue;
+            }
+            let p = dir.join(&name);
+            // The entry's own location, before following a symlink.
+            let at = real.join(&name);
+            if self.excluded(&at) {
+                continue;
+            }
+            // Follows symlinks; a loop or a dangling link is an error rather than
+            // a silently skipped entry, which could hide documents.
+            let meta = std::fs::metadata(&p)
+                .map_err(|e| Error::new(format!("cannot read {}: {e}", p.display())))?;
+            if !meta.is_dir() && !is_markdown(&p) {
+                continue;
+            }
+            let resolved = p
+                .canonicalize()
+                .map_err(|e| Error::new(format!("cannot read {}: {e}", p.display())))?;
+            if self.excluded(&resolved) {
+                continue;
+            }
+            if meta.is_dir() {
+                self.dir(&p, resolved)?;
+            } else {
+                self.file(p, resolved);
+            }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Expands input paths: files are taken as given, directories are walked for
-/// Markdown files (skipping hidden entries and `exclude`).
+/// Markdown files (skipping hidden entries and `exclude`, following symlinks
+/// once). A file reached by several paths is checked once.
 pub fn collect_inputs(inputs: &[PathBuf], exclude: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
-    let mut out = Vec::new();
+    let mut walk = Walk {
+        exclude: exclude.iter().map(|x| resolve(x)).collect(),
+        visited: HashSet::new(),
+        seen: HashSet::new(),
+        out: Vec::new(),
+    };
     for p in inputs {
-        if p.is_dir() {
-            walk(p, exclude, &mut out)?;
-        } else if p.is_file() {
-            out.push(p.clone());
+        let meta = std::fs::metadata(p)
+            .map_err(|e| Error::new(format!("cannot read {}: {e}", p.display())))?;
+        let resolved = p
+            .canonicalize()
+            .map_err(|e| Error::new(format!("cannot read {}: {e}", p.display())))?;
+        if meta.is_dir() {
+            walk.dir(p, resolved)?;
         } else {
-            return Err(Error::new(format!(
-                "no such file or directory: {}",
-                p.display()
-            )));
+            walk.file(p.clone(), resolved);
         }
     }
-    let mut seen = std::collections::HashSet::new();
-    out.retain(|p| seen.insert(p.clone()));
-    Ok(out)
+    Ok(walk.out)
 }
 
 /// Checks `files` in parallel. Findings come back in input order.

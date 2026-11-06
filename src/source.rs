@@ -119,11 +119,19 @@ impl IndexedText {
     /// the original text, so that a match may not begin or end between them.
     fn joined(&self, a: usize, b: usize) -> bool {
         let (x, y) = (self.skel[a], self.skel[b]);
-        let numeric = |c: char| c.is_ascii_digit() || matches!(c, '.' | ',' | ' ' | '-' | '%');
+        let (oa, ob) = (self.skel_off[a] as usize, self.skel_off[b] as usize);
+        if oa == ob {
+            return true; // one original character, such as a ligature
+        }
+        let after_a = oa + self.text[oa..].chars().next().map_or(0, char::len_utf8);
+        let raw_gap = &self.text[after_a.min(ob)..ob];
+        let numeric = |c: char| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '%');
         // A digit next to a digit, decimal point, separator, sign or percent
         // sign continues the same number: "12" of "12.3 %" or "2.1" of "-2.1".
+        // Whitespace ends a number except before a percent sign, as in the
+        // number scanner: "31, 2021" and table cells "68.56 66.31" are two.
         if (x.is_ascii_digit() && numeric(y)) || (y.is_ascii_digit() && numeric(x)) {
-            return true;
+            return y == '%' || !raw_gap.contains(char::is_whitespace);
         }
         if !(x.is_alphanumeric() && y.is_alphanumeric())
             || normalize::is_cjk(x)
@@ -132,12 +140,7 @@ impl IndexedText {
             return false;
         }
         // Two letters or digits: one word unless the original text separates them.
-        let (oa, ob) = (self.skel_off[a] as usize, self.skel_off[b] as usize);
-        if oa == ob {
-            return true; // one original character, such as a ligature
-        }
-        let after_a = oa + self.text[oa..].chars().next().map_or(0, char::len_utf8);
-        let gap: String = self.text[after_a.min(ob)..ob]
+        let gap: String = raw_gap
             .chars()
             .filter(|c| {
                 !unicode_normalization::char::is_combining_mark(*c)
@@ -347,6 +350,12 @@ mod tests {
         assert!(find("retrieval gain").is_some());
         assert!(find("gain of 2.1 points").is_none());
         assert!(find("gain of -2.1 points").is_some());
+        // Whitespace separates numbers, as in the number scanner.
+        let t = IndexedText::new("Scores 68.56\n66.31 on March 31, 2021 and 1,234 runs.".into());
+        let find = |q: &str| t.find_bounded(&normalize::skeleton_str(q), 0);
+        assert!(find("66.31 on March").is_some());
+        assert!(find("2021 and").is_some());
+        assert!(find("234 runs").is_none());
         let t = IndexedText::new("本研究では金融文書の検索精度を改善する。".into());
         assert!(
             t.find_bounded(&normalize::skeleton_str("検索精度を改善"), 0)

@@ -1,0 +1,23 @@
+[package]
+name = "claimcheck"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "Check that a research document's quotes, numbers and citations are supported by the sources it cites"
+readme = "README.md"
+keywords = ["research", "citations", "verification", "markdown"]
+categories = ["command-line-utilities", "text-processing"]
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+pulldown-cmark = { version = "0.13.6", default-features = false }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+toml = "1.2.1"
+unicode-normalization = "0.1.26"
+
+[profile.release]
+codegen-units = 1

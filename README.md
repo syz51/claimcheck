@@ -118,6 +118,9 @@ method = ["proposes", "introduces", "algorithm", "pipeline", "trained", "fine-tu
           "implements", "uses", "applies", "loss function", "ablation", "..."]
 
 [claimcheck.claims.required_depth]
+# When this table is absent, `result` and `method` need "method", for whichever
+# of them are kinds (or `number_kind`). When present, it replaces the defaults
+# and every key must be a kind.
 result = "method"
 method = "method"
 
@@ -144,7 +147,7 @@ title_similarity = 0.9
 
 `claimcheck rules` and the source (`src/config.rs`) give the full keyword lists. Keyword phrases match whole words, case-insensitively. A keyword within three words after a modal or conditional word does not count. Those words are must, should, could, would, might, may, can, cannot, whether, if and unless. A keyword hyphenated to another word, as in "outcome-trained agents", does not count either.
 
-A severity override changes the findings a rule reports at its default severity. `depth-insufficient` and `evidence-label` also report at other severities, and those findings keep them: an info stays info. `off` drops every finding of the rule.
+A severity override sets the severity of every finding of the rule, whatever severity the rule would have given it. For example, `quote-not-found = "info"` makes both near misses (warn) and fabricated quotations (error) info, and `depth-insufficient = "error"` makes its info findings errors too. `off` drops every finding of the rule.
 
 ## Rules
 
@@ -220,7 +223,7 @@ A sentence whose cited references have no text gets one `source-text-missing` fi
 
 ### Claim kinds and depth
 
-Sentences that cite references are classified by keyword into claim kinds, `result` and `method` by default. Each kind has a required depth. The severity depends on the evidence for the kind:
+Sentences that cite references are classified by keyword into claim kinds, `result` and `method` by default. A kind listed in `required_depth` has a required depth; other kinds are ignored by this rule, so they neither cause a finding nor make a sentence ambiguous. The severity depends on the evidence for the kind:
 
 - **Error:** a keyword of the kind is within `window_chars` of the citation, in the same clause, with no `;` between them, and the reference's depth is below the kind's requirement.
 - **Info:**

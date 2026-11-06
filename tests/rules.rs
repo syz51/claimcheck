@@ -296,7 +296,7 @@ fn numbers_alone_are_weak_claim_evidence() {
 
 #[test]
 fn ambiguous_claim_kind_is_info() {
-    let toml = "[claimcheck.claims]\nnumber_kind = \"result\"\n[claimcheck.claims.kinds]\nresult = [\"outperforms\"]\nbackground = [\"is related to\"]\n[claimcheck.claims.required_depth]\nresult = \"method\"\n";
+    let toml = "[claimcheck.claims]\nnumber_kind = \"result\"\n[claimcheck.claims.kinds]\nresult = [\"outperforms\"]\nbackground = [\"is related to\"]\n[claimcheck.claims.required_depth]\nresult = \"method\"\nbackground = \"abstract\"\n";
     let fx = Fixture::new(&[reference("2", Some("abstract"), &[])], &[], toml);
     let f = fx.check("It is related to and outperforms BM25 [2].\n");
     assert_eq!(rules(&f), [(Rule::DepthInsufficient, Severity::Info)]);
@@ -616,4 +616,58 @@ fn semicolon_separated_numeric_keys_are_citations() {
     assert_eq!(f[0].data["reference"], "9");
     // A locator after the semicolon is not a key.
     assert!(fx.check("See [1; p. 4] and [1; note].\n").is_empty());
+}
+
+#[test]
+fn severity_override_applies_to_every_finding_of_the_rule() {
+    let fx = Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[("texts/1.txt", SOURCE)],
+        "[claimcheck.severity]\nquote-not-found = \"info\"\n",
+    );
+    // The rule's default severity is error; its near misses are warn.
+    let f = fx.check("They study “financial evidence retrieval for quarterly reports” [1].\n");
+    assert_eq!(rules(&f), [(Rule::QuoteNotFound, Severity::Info)]);
+    let f = fx.check("They claim \"graph neural networks solve every retrieval task\" [1].\n");
+    assert_eq!(rules(&f), [(Rule::QuoteNotFound, Severity::Info)]);
+    let fx = Fixture::new(
+        &[reference("2", Some("abstract"), &[])],
+        &[],
+        "[claimcheck.severity]\ndepth-insufficient = \"error\"\n",
+    );
+    // A numbers-only depth finding is info by default.
+    let f = fx.check("It reaches 71.2 on FinQA [2].\n");
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::SourceTextMissing, Severity::Warn),
+            (Rule::DepthInsufficient, Severity::Error)
+        ]
+    );
+}
+
+#[test]
+fn depth_ignores_kinds_without_required_depth() {
+    let toml = "[claimcheck.claims]\nnumber_kind = \"result\"\n[claimcheck.claims.kinds]\nresult = [\"outperforms\"]\ndataset = [\"benchmark\"]\n[claimcheck.claims.required_depth]\nresult = \"method\"\n";
+    let fx = Fixture::new(&[reference("2", Some("abstract"), &[])], &[], toml);
+    let f = fx.check("It outperforms BM25 on the benchmark [2].\n");
+    assert_eq!(rules(&f), [(Rule::DepthInsufficient, Severity::Error)]);
+}
+
+#[test]
+fn kinds_only_claims_config_loads() {
+    let root = temp_project(&[]);
+    let toml = "[claimcheck.claims]\nnumber_kind = \"result\"\n[claimcheck.claims.kinds]\nresult = [\"outperforms\"]\n";
+    let cfg = Config::from_toml(&root, toml).unwrap();
+    assert_eq!(
+        cfg.claims.required_depth.keys().collect::<Vec<_>>(),
+        ["result"]
+    );
+    let fx = Fixture::new(&[reference("2", Some("abstract"), &[])], &[], toml);
+    let f = fx.check("It outperforms BM25 [2].\n");
+    assert_eq!(rules(&f), [(Rule::DepthInsufficient, Severity::Error)]);
+    // An explicit table is still validated.
+    let bad = format!("{toml}[claimcheck.claims.required_depth]\nmethod = \"method\"\n");
+    let err = Config::from_toml(&root, &bad).unwrap_err().to_string();
+    assert!(err.contains("unknown claim kind `method`"), "{err}");
 }

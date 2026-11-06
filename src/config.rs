@@ -76,8 +76,9 @@ impl Default for NumbersConfig {
 pub struct ClaimsToml {
     /// Claim kind → words or phrases (case-insensitive, whole words).
     pub kinds: BTreeMap<String, Vec<String>>,
-    /// Claim kind → minimum reference depth.
-    pub required_depth: BTreeMap<String, Depth>,
+    /// Claim kind → minimum reference depth. When absent, the defaults
+    /// (`result` and `method` need `method`) apply to the kinds that exist.
+    pub required_depth: Option<BTreeMap<String, Depth>>,
     /// Kind suggested by a checked number in the sentence. Numbers alone
     /// give info, never an error.
     pub number_kind: Option<String>,
@@ -144,12 +145,9 @@ impl Default for ClaimsToml {
                 "ablation",
             ]),
         );
-        let mut required_depth = BTreeMap::new();
-        required_depth.insert("result".to_string(), Depth::Method);
-        required_depth.insert("method".to_string(), Depth::Method);
         ClaimsToml {
             kinds,
-            required_depth,
+            required_depth: None,
             number_kind: Some("result".to_string()),
             window_chars: 80,
         }
@@ -495,13 +493,24 @@ impl Config {
                 kinds.push((kind.clone(), re));
             }
         }
-        for kind in cc.claims.required_depth.keys() {
-            if !cc.claims.kinds.contains_key(kind) && cc.claims.number_kind.as_ref() != Some(kind) {
-                return Err(Error::new(format!(
-                    "{where_}: [claimcheck.claims.required_depth] unknown claim kind `{kind}`"
-                )));
+        let known = |kind: &str| {
+            cc.claims.kinds.contains_key(kind) || cc.claims.number_kind.as_deref() == Some(kind)
+        };
+        let required_depth = match cc.claims.required_depth {
+            Some(map) => {
+                if let Some(kind) = map.keys().find(|k| !known(k)) {
+                    return Err(Error::new(format!(
+                        "{where_}: [claimcheck.claims.required_depth] unknown claim kind `{kind}`"
+                    )));
+                }
+                map
             }
-        }
+            None => ["result", "method"]
+                .into_iter()
+                .filter(|k| known(k))
+                .map(|k| (k.to_string(), Depth::Method))
+                .collect(),
+        };
         let comparative = phrase_regex(&cc.uncited.comparative)
             .map_err(|e| Error::new(format!("{where_}: [claimcheck.uncited] comparative: {e}")))?;
         for label in cc.labels.min_depth.keys() {
@@ -549,7 +558,7 @@ impl Config {
             numbers: cc.numbers,
             claims: Claims {
                 kinds,
-                required_depth: cc.claims.required_depth,
+                required_depth,
                 number_kind: cc.claims.number_kind,
                 window_chars: cc.claims.window_chars,
             },

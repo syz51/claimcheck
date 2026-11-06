@@ -134,7 +134,7 @@ fn push(
 ) {
     let severity = match cfg.severity.get(&rule) {
         Some(SeverityOverride::Off) => return,
-        Some(SeverityOverride::Set(s)) if severity == rule.default_severity() => *s,
+        Some(SeverityOverride::Set(s)) => *s,
         _ => severity,
     };
     out.push(Finding {
@@ -916,9 +916,10 @@ impl<'a> Ctx<'a> {
                     })
                 })
             };
+            // Only kinds with a required depth can make or dilute an error.
             let close: Vec<&str> = kinds
                 .iter()
-                .filter(|k| near(&k.keywords))
+                .filter(|k| required.contains_key(&k.name) && near(&k.keywords))
                 .map(|k| k.name.as_str())
                 .collect();
             let depth = self.p.registry.refs[r].depth;

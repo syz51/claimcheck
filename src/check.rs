@@ -372,7 +372,9 @@ impl<'a> Ctx<'a> {
                 let line = doc.line_of(unit_offset(block, u));
                 if !refs.is_empty() {
                     if !nums.is_empty() {
-                        self.check_numbers(line, &nums, &refs, &block.text(u.start, u.end).0);
+                        let linked = block.has_link(u.start, u.end);
+                        let sentence = block.text(u.start, u.end).0;
+                        self.check_numbers(line, &nums, &refs, &sentence, linked);
                     }
                     if block.is_prose() {
                         self.check_depth(block, u, line, &nums, &refs);
@@ -740,8 +742,17 @@ impl<'a> Ctx<'a> {
         out
     }
 
-    fn check_numbers(&mut self, line: usize, nums: &[DocNumber], refs: &[usize], sentence: &str) {
+    /// `linked`: the sentence holds a link that is not a citation.
+    fn check_numbers(
+        &mut self,
+        line: usize,
+        nums: &[DocNumber],
+        refs: &[usize],
+        sentence: &str,
+        linked: bool,
+    ) {
         let sentence = quote_excerpt(sentence, 200);
+        let linked = linked && self.p.cfg.numbers.links_are_evidence;
         let texts: Vec<(usize, &TextEntry, Arc<IndexedText>)> = refs
             .iter()
             .flat_map(|&r| self.p.texts_of(r).into_iter().map(move |(e, t)| (r, e, t)))
@@ -790,6 +801,9 @@ impl<'a> Ctx<'a> {
             data.insert("references".into(), json!(keys));
             data.insert("context".into(), json!(n.context));
             data.insert("nearest".into(), Value::Array(nearest));
+            if linked {
+                data.insert("linked".into(), json!(true));
+            }
             let near = if evidence.is_empty() {
                 String::new()
             } else {
@@ -807,7 +821,11 @@ impl<'a> Ctx<'a> {
             );
             self.emit(
                 Rule::NumberNotInSource,
-                Severity::Warn,
+                if linked {
+                    Severity::Info
+                } else {
+                    Severity::Warn
+                },
                 line,
                 msg,
                 evidence,

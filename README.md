@@ -109,6 +109,7 @@ year_min = 1900
 year_max = 2100
 context_window = 150   # characters searched around a context word for nearby numbers
 nearest = 3            # nearby numbers reported
+links_are_evidence = false  # a non-citation link in the same sentence lowers number-not-in-source to info
 
 [claimcheck.claims]
 number_kind = "result" # kind suggested by a checked number (info only, never an error)
@@ -162,7 +163,7 @@ A severity override sets the severity of every finding of the rule, whatever sev
 | `quote-not-found` | error | Quoted text attached to a citation does not occur in the cited source text. Below `error_below` similarity it is an error; between that and verbatim, a warning. Both report the closest match with its line and similarity. |
 | `source-text-missing` | warn | A quotation or number needs a cited source's text, but the registry lists none or the file cannot be read. The check is undecided, never "supported". |
 | `source-text-changed` | warn | A source text file's SHA-256 differs from the registry's `sha256`. The text is still used. |
-| `number-not-in-source` | warn | A number in a citing sentence occurs in none of the cited source texts. Up to `nearest` numbers near the sentence's words in the source are reported. |
+| `number-not-in-source` | warn | A number in a citing sentence occurs in none of the cited source texts. Up to `nearest` numbers near the sentence's words in the source are reported. It is info when `numbers.links_are_evidence` is set and the sentence holds a non-citation link. |
 | `depth-insufficient` | error | A sentence makes a claim of a kind that needs deeper inspection than the cited reference's `depth`. It is info when the kind is uncertain (see below). |
 | `uncited-claim` | warn | A sentence makes a quantitative or comparative claim with no citation, link or evidence label. |
 | `evidence-label` | warn | A label is outside the vocabulary but close to it (error), a required label is missing (warn), or a label's `min_depth` is not met (error). |
@@ -223,6 +224,8 @@ These are not checked:
 A date, locator or identifier hides a number only when it covers the whole number. Dates need a plausible year, month and day, so `9999.99` and `55.1-58.4` are checked. Dates and locators never hide a percentage, a scaled number or a number with thousands separators, so "level 95%" and "rows 2,378" are checked.
 
 A sentence whose cited references have no text gets one `source-text-missing` finding listing its numbers.
+
+With `links_are_evidence` set in `[claimcheck.numbers]` (off by default), a number missing from the cited texts is reported at info, not warn, when the same sentence holds a link that is not a citation, such as a link to the project's own measurement of a cited dataset. Such a finding has `"linked": true` in its data. A link in another sentence of the paragraph or table row does not count, so it cannot hide a misquoted number elsewhere. A bare `[N]` is still read as a citation, not as a link.
 
 ### Claim kinds and depth
 

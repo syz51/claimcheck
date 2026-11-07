@@ -56,6 +56,11 @@ pub struct NumbersConfig {
     /// Normalized characters around a context word searched for nearby numbers.
     pub context_window: usize,
     pub nearest: usize,
+    /// A link that is not a citation (to a local file or URL) in the same
+    /// sentence lowers `number-not-in-source` to info: the sentence points
+    /// to its own evidence, such as the project's count of a dataset beside
+    /// the dataset's citation. Off by default.
+    pub links_are_evidence: bool,
 }
 
 impl Default for NumbersConfig {
@@ -67,6 +72,7 @@ impl Default for NumbersConfig {
             year_max: 2100,
             context_window: 150,
             nearest: 3,
+            links_are_evidence: false,
         }
     }
 }

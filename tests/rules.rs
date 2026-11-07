@@ -770,3 +770,53 @@ fn check_without_paths_is_a_usage_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("no input paths"));
 }
+
+#[test]
+fn a_link_in_the_same_sentence_lowers_a_missing_number_to_info_when_enabled() {
+    let refs = [reference("1", Some("full"), &["texts/1.txt"])];
+    let texts = [("texts/1.txt", SOURCE)];
+    let on = Fixture::new(
+        &refs,
+        &texts,
+        "[claimcheck.numbers]\nlinks_are_evidence = true\n",
+    );
+    let off = Fixture::new(&refs, &texts, "");
+    let linked = "The corpus has 4321 filings [1], counted in [our audit](audit.md).\n";
+    let plain = "The corpus has 4321 filings [1].\n";
+    // A link in another sentence of the same paragraph.
+    let elsewhere = "The corpus has 4321 filings [1]. See [our audit](audit.md).\n";
+
+    let f = on.check(linked);
+    assert_eq!(
+        rules(&f),
+        [(Rule::NumberNotInSource, Severity::Info)],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["linked"], true);
+    let f = on.check(plain);
+    assert_eq!(
+        rules(&f),
+        [(Rule::NumberNotInSource, Severity::Warn)],
+        "{f:#?}"
+    );
+    assert!(f[0].data.get("linked").is_none());
+    let f = on.check(elsewhere);
+    assert_eq!(
+        rules(&f),
+        [(Rule::NumberNotInSource, Severity::Warn)],
+        "{f:#?}"
+    );
+    // Off by default.
+    let f = off.check(linked);
+    assert_eq!(
+        rules(&f),
+        [(Rule::NumberNotInSource, Severity::Warn)],
+        "{f:#?}"
+    );
+    assert!(f[0].data.get("linked").is_none());
+    // A number the source has is still not reported.
+    assert!(
+        on.check("They answer 1234 questions [1], see [our audit](audit.md).\n")
+            .is_empty()
+    );
+}

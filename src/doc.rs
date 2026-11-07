@@ -101,6 +101,12 @@ impl Block {
         out
     }
 
+    /// Whether `start..end` holds the visible text of a link that is not a
+    /// citation.
+    pub fn has_link(&self, start: usize, end: usize) -> bool {
+        self.chars[start..end].iter().any(|p| p.link)
+    }
+
     /// Visible text of `start..end` without citation markers, with a map from
     /// each byte of the returned string to its index in `chars`.
     pub fn text(&self, start: usize, end: usize) -> (String, Vec<usize>) {

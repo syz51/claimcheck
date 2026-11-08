@@ -1684,6 +1684,31 @@ fn scaled_matches_follow_the_rounding_rules() {
 }
 
 #[test]
+fn a_range_carries_its_scale_to_the_first_end() {
+    let fx = Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[(
+            "texts/1.txt",
+            "Table 1: top 10 arbitrage accounts by profit\nRank Profit\n1 2,009,631.76\n10 383,569.94\n",
+        )],
+        "",
+    );
+    let f = fx.check("The top 10 arbitrage accounts made $0.38–2.01M each in profit [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("0.38".into(), Severity::Info),
+            ("2.01".into(), Severity::Info)
+        ],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["match"]["kind"], "scaled");
+    assert_eq!(f[0].data["match"]["value"], "383569.94");
+    assert_eq!(f[1].data["match"]["kind"], "scaled");
+    assert_eq!(f[1].data["match"]["value"], "2009631.76");
+}
+
+#[test]
 fn a_lone_letter_after_an_integer_is_no_scale() {
     let fx = scale_fixture("");
     // `5 B` is a panel label: 5 stays a small integer, which is not checked.

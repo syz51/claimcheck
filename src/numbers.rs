@@ -13,6 +13,8 @@
 //! scaled value too: `1.2k`, `26.6 M`, `4.57 bn` and `8.65 million`. A lone
 //! letter after a space (`26.6 M`) counts only after a decimal or a currency
 //! sign, so `Figure 3 B` and `5 M HCl`-like labels keep their plain value.
+//! In a range written with a dash and no spaces, a scale after the second
+//! end applies to the first too: `$0.38–2.01M` is 380000 to 2010000.
 //!
 //! A document number that misses every exact key may still match a nearby
 //! source number approximately: see [`NumTok::near_match`].
@@ -431,6 +433,18 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
                 || p == '_'
                 || ((p == '-' || p == '/' || p == '.') && start > 1 && is_letter(chars[start - 2]))
         };
+        // The previous token, when it starts a range ending here: a dash with
+        // no space on either side, and a first end with no sign, unit, scale
+        // or other dash before it, so `5 - 10M` and `-5-3M` are no ranges.
+        let range_from = out.len().checked_sub(1).filter(|&k| {
+            let p: &NumTok = &out[k];
+            p.end + 1 == start
+                && chars[p.end] == '-'
+                && !dotted
+                && !p.dotted
+                && !p.glued_left
+                && !(p.start > 0 && chars[p.start - 1] == '-')
+        });
         // Suffixes: optional space, then a unit.
         let mut percent = false;
         let mut scaled = None;
@@ -450,16 +464,26 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
             }
         } else if after_space > end {
             // A lone letter after a space is often a label (`Figure 3 B`),
-            // so it is a scale only after a decimal or a currency sign.
+            // so it is a scale only after a decimal or a currency sign. A
+            // currency sign before a range applies to both ends (`$10-20 M`).
             let lone = !at(after_space + 1).is_some_and(is_letter);
-            let money = start > 0 && matches!(chars[start - 1], '$' | '€' | '£' | '¥');
+            let money = |s: usize| s > 0 && matches!(chars[s - 1], '$' | '€' | '£' | '¥');
+            let range_money = range_from.is_some_and(|k| money(out[k].start));
             scaled = suffix_at(chars, after_space)
-                .filter(|&shift| shift > 0 && (!lone || decimal || money));
+                .filter(|&shift| shift > 0 && (!lone || decimal || money(start) || range_money));
         }
         let scaled = scaled.map(|shift| Scaled {
             shift,
             value: shifted(&int, &frac, shift),
         });
+        // The first end of a range takes the second end's scale: `$0.38-2.01M`.
+        if let (Some(k), Some(sc)) = (range_from, &scaled) {
+            let (int, frac) = out[k].value.split_once('.').unwrap_or((&out[k].value, ""));
+            out[k].scaled = Some(Scaled {
+                shift: sc.shift,
+                value: shifted(int, frac, sc.shift),
+            });
+        }
         out.push(NumTok {
             start,
             end,
@@ -577,6 +601,66 @@ mod tests {
         // Two spaces, or a line break, end the number.
         assert_eq!(scaled("2.5  bn"), None);
         assert_eq!(scaled("2.5\nbn"), None);
+    }
+
+    /// Scaled values of every token in `s`, after normalization.
+    fn range(s: &str) -> Vec<Option<String>> {
+        let norm: Vec<char> = crate::normalize::normalize_str(s)
+            .iter()
+            .map(|n| n.c)
+            .collect();
+        scan(&norm)
+            .into_iter()
+            .map(|t| t.scaled.map(|s| s.value))
+            .collect()
+    }
+
+    fn both(a: &str, b: &str) -> Vec<Option<String>> {
+        vec![Some(a.to_string()), Some(b.to_string())]
+    }
+
+    #[test]
+    fn a_range_carries_its_scale_to_the_first_end() {
+        assert_eq!(range("$0.38–2.01M each"), both("380000", "2010000"));
+        assert_eq!(range("1.2–3.4bn"), both("1200000000", "3400000000"));
+        assert_eq!(range("1.2-3.4bn"), both("1200000000", "3400000000"));
+        assert_eq!(range("5-10k"), both("5000", "10000"));
+        assert_eq!(
+            range("1,200–1,500 million"),
+            both("1200000000", "1500000000")
+        );
+        // A currency sign before the range makes a lone letter a scale.
+        assert_eq!(range("$10–20 M"), both("10000000", "20000000"));
+        assert_eq!(range("10–2.5 M"), both("10000000", "2500000"));
+    }
+
+    #[test]
+    fn a_scale_is_not_carried_outside_a_range() {
+        // A lone letter after an integer without a currency sign is a label.
+        assert_eq!(range("10–20 M"), [None, None]);
+        // A dash with spaces is no range.
+        assert_eq!(range("5 - 10M"), [None, Some("10000000".into())]);
+        assert_eq!(range("5 – 10M"), [None, Some("10000000".into())]);
+        // A first end with its own scale or unit keeps it.
+        assert_eq!(range("2k-3M"), both("2000", "3000000"));
+        assert_eq!(range("5%-10M"), [None, Some("10000000".into())]);
+        // A negative first end, a chain of dashes, an identifier or a
+        // version number is no range.
+        assert_eq!(range("-5-3M"), [None, Some("3000000".into())]);
+        assert_eq!(range("1-5-3M"), [None, None, Some("3000000".into())]);
+        assert_eq!(range("BGE-3-5M"), [None, Some("5000000".into())]);
+        assert_eq!(range("1.2.3-4M"), [None, Some("4000000".into())]);
+        // Table cells such as `5-3` with no scale stay plain.
+        assert_eq!(range("5-3 and 12-7"), [None, None, None, None]);
+    }
+
+    #[test]
+    fn ranges_keep_their_signs() {
+        let chars: Vec<char> = "$0.38-2.01M and 5-3 and -0.5-1.5M".chars().collect();
+        let toks = scan(&chars);
+        let signs: Vec<bool> = toks.iter().map(|t| t.negative).collect();
+        assert_eq!(signs, [false, false, false, false, true, false]);
+        assert!(toks[4].scaled.is_none());
     }
 
     #[test]

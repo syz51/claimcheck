@@ -17,6 +17,9 @@ pub struct IndexedText {
     line_starts: Vec<usize>,
     /// Normalized characters (case preserved) for number and word lookups.
     norm: Vec<NChar>,
+    /// Position of each `norm` character with every run of spaces counted as
+    /// one character, so that layout padding does not stretch distances.
+    squeezed: Vec<u32>,
     /// Skeleton characters and the original byte offset of each.
     pub skel: Vec<char>,
     skel_off: Vec<u32>,
@@ -40,6 +43,14 @@ impl IndexedText {
         let mut line_starts = vec![0];
         line_starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
         let norm = normalize::normalize_str(&text);
+        let mut squeezed = Vec::with_capacity(norm.len());
+        let mut pos = 0u32;
+        for (i, n) in norm.iter().enumerate() {
+            if i > 0 && !(n.c == ' ' && norm[i - 1].c == ' ') {
+                pos += 1;
+            }
+            squeezed.push(pos);
+        }
         let (skel, skel_off) = normalize::skeleton(&norm);
         let mut skel_str = String::with_capacity(skel.len());
         let mut skel_byte_to_char = Vec::with_capacity(skel.len() * 2);
@@ -95,6 +106,7 @@ impl IndexedText {
             text,
             line_starts,
             norm,
+            squeezed,
             skel,
             skel_off,
             skel_str,
@@ -231,6 +243,8 @@ impl IndexedText {
     /// Source numbers near occurrences of `context` words, best first:
     /// `(value, line)` pairs ranked by how many distinct context words occur
     /// within `window` normalized characters, then by closeness to `target`.
+    /// The window counts each run of spaces or tabs as one character, so a
+    /// padded table row is as close to its label as the same row unpadded.
     pub fn nearby_numbers(
         &self,
         context: &[String],
@@ -299,10 +313,11 @@ impl IndexedText {
             };
             let mut seen_here: Vec<usize> = Vec::new();
             for &p in positions.iter().take(500) {
-                let p = p as usize;
-                let lo = self.numbers.partition_point(|t| t.start + window < p);
+                let p = self.squeezed[p as usize] as usize;
+                let at = |t: &NumTok| self.squeezed[t.start] as usize;
+                let lo = self.numbers.partition_point(|t| at(t) + window < p);
                 for (i, t) in self.numbers[lo..].iter().enumerate() {
-                    if t.start > p + window {
+                    if at(t) > p + window {
                         break;
                     }
                     seen_here.push(lo + i);
@@ -451,5 +466,28 @@ mod tests {
         let t = IndexedText::new("Recall is 71.2 on FinQA.\nUnrelated 70.6 value.\n".into());
         let near = t.nearby_numbers(&["recall".into(), "finqa".into()], 70.5, 15, 2);
         assert_eq!(near[0], ("71.2".to_string(), 1));
+    }
+
+    #[test]
+    fn window_counts_space_runs_as_one_character() {
+        // A padded table row: the cell is over 150 characters from its
+        // label, but under 150 once each space run counts as one.
+        let pad = " ".repeat(40);
+        let row = format!("Premium{pad}89{pad}12{pad}7{pad}43.09");
+        let t = IndexedText::new(format!("Premium by group\n{row}\n"));
+        assert!(row.chars().count() > 150);
+        let near = t.nearby_numbers(&["premium".into()], 43.1, 150, 10);
+        assert!(near.iter().any(|(v, _)| v == "43.09"), "{near:?}");
+        // Text that is truly far away stays out of the window.
+        let filler = "word ".repeat(40);
+        let t = IndexedText::new(format!("Premium by group\n{filler}\n43.09\n"));
+        assert!(
+            t.nearby_numbers(&["premium".into()], 43.1, 150, 10)
+                .is_empty()
+        );
+        assert_eq!(
+            t.nearby_numbers(&["premium".into()], 43.1, 300, 10).len(),
+            1
+        );
     }
 }

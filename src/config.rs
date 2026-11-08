@@ -53,7 +53,8 @@ pub struct NumbersConfig {
     pub exclude_years: bool,
     pub year_min: u64,
     pub year_max: u64,
-    /// Normalized characters around a context word searched for nearby numbers.
+    /// Normalized characters around a context word searched for nearby
+    /// numbers; each run of spaces or tabs counts as one character.
     pub context_window: usize,
     pub nearest: usize,
     /// A link that is not a citation (to a local file or URL) in the same

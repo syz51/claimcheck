@@ -22,7 +22,10 @@ pub struct NumTok {
     pub value: String,
     /// Value with a `k`, `M` or `B` multiplier applied, when one follows.
     pub scaled: Option<String>,
+    /// Followed by `%`, `‰` or `pp`.
     pub percent: bool,
+    /// Followed by `‰`: per mille, not per cent.
+    pub permille: bool,
     pub decimal: bool,
     /// Fractional digits as written, trailing zeros included (`8.20` has 2).
     pub places: usize,
@@ -107,7 +110,7 @@ impl NumTok {
     ///   written, and rounding `s` half-up or half-even to those digits
     ///   gives this value (`8.016` as `8.02`, `1030.90` as `1,031`).
     ///   Truncation does not match (`1218.66` as `1218`).
-    /// - Percent: this number is a percentage, `0 < |s| < 1` and `s` has no
+    /// - Percent: this number is a percentage (`%` or `pp`, not `‰`), `0 < |s| < 1` and `s` has no
     ///   percent sign, and `s` × 100 equals this value
     ///   (`0.082` as `8.2%`), or rounds to it as above.
     ///
@@ -125,7 +128,7 @@ impl NumTok {
         if rounds(&s.value) {
             return Some(NearMatch::Rounded);
         }
-        if !self.percent || s.percent {
+        if !self.percent || self.permille || s.percent {
             return None;
         }
         let frac = s.value.strip_prefix("0.")?;
@@ -342,6 +345,7 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
         let mut scaled = None;
         let mut glued_right = false;
         let after_space = if at(end) == Some(' ') { end + 1 } else { end };
+        let permille = at(after_space) == Some('‰');
         let pp = at(after_space) == Some('p')
             && at(after_space + 1) == Some('p')
             && !at(after_space + 2).is_some_and(is_letter);
@@ -369,6 +373,7 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
             value: canonical(&int, &frac),
             scaled,
             percent,
+            permille,
             decimal,
             places: frac.len(),
             separated,
@@ -530,6 +535,9 @@ mod tests {
         assert_eq!(near("8.2", "0.082", true), None);
         assert_eq!(near("120%", "1.2", true), None);
         assert_eq!(near("8.2%", "0.082%", true), None);
+        assert_eq!(near("8.2 pp", "0.082", true), Some(NearMatch::Percent));
+        assert_eq!(near("8.2‰", "0.082", true), None);
+        assert_eq!(near("8.2‰", "8.21", true), Some(NearMatch::Rounded));
         assert_eq!(near("0%", "0", true), None);
     }
 

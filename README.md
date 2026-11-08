@@ -286,7 +286,7 @@ Entries under a reference-list heading are matched to the registry. The key come
 {"schema":"rf.measure/1","tool":"claimcheck","unit":"uncited-sentence","count":958,"keys":["03b7e2a9c4d16f58","…"]}
 ```
 
-`lab check` stores these records, so lab can judge a check-run lesson by findings per new sentence of the fitting unit ([interfaces](https://github.com/syz51/research-factory/blob/main/docs/interfaces.md), "Check-run denominators"). For example, `uncited-claim` and `evidence-label` fire on text that does not cite, so they fit `uncited-sentence`.
+`lab check` stores these records, so lab can judge a check-run lesson by findings per new sentence ([interfaces](https://github.com/syz51/research-factory/blob/main/docs/interfaces.md), "Check-run denominators"). `uncited-claim` fires only on sentences that do not cite, so `citing-sentence` never grows when it fires; `uncited-sentence` does. Lab 0.9.0 and earlier read a check that prints several units as measuring no interval, so they need a lab that picks the unit per rule.
 
 There is one line per unit, always in this order:
 

@@ -187,9 +187,9 @@ pub struct Measure {
 }
 
 impl Measure {
-    fn add(&mut self, o: Measure) {
+    fn add(&mut self, mut o: Measure) {
         self.count += o.count;
-        self.keys.extend(o.keys);
+        self.keys.append(&mut o.keys);
     }
 
     /// Keys sort as bytes, which is their order as hex strings.

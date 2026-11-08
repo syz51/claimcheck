@@ -149,6 +149,10 @@ headings = ["references", "reference list", "bibliography", "works cited",
             "literature cited", "sources", "参考文献", "引用文献"]
 title_similarity = 0.9
 
+[claimcheck.paper_notes]
+commentary_sections = []  # headings of the author's own commentary in paper notes,
+                          # e.g. ["Trading implications", "Related"]
+
 [claimcheck.severity]
 # rule-id = "error" | "warn" | "info" | "off"
 ```
@@ -169,7 +173,7 @@ A severity override sets the severity of every finding of the rule, whatever sev
 | `source-text-changed` | warn | A source text file's SHA-256 differs from the registry's `sha256`. The text is still used. |
 | `number-not-in-source` | warn | A number in a citing sentence occurs in none of the cited source texts. Up to `nearest` numbers near the sentence's words in the source are reported. It is info when `numbers.links_are_evidence` is set and the sentence holds a non-citation link, and when the number matches a nearby source number only as a rounding or a percentage (see Numbers). |
 | `depth-insufficient` | error | A sentence makes a claim of a kind that needs deeper inspection than the cited reference's `depth`. It is info when the kind is uncertain (see below). |
-| `uncited-claim` | warn | A sentence makes a quantitative or comparative claim with no citation, link or evidence label. A sentence in a paper note cites the note's entry (see [Paper notes](#paper-notes)). |
+| `uncited-claim` | warn | A sentence makes a quantitative or comparative claim with no citation, link or evidence label. A sentence in a paper note cites the note's entry, except in a commentary section (see [Paper notes](#paper-notes)). |
 | `evidence-label` | warn | A label is outside the vocabulary but close to it (error), a required label is missing (warn), or a label's `min_depth` is not met (error). |
 | `reference-list-mismatch` | error | An entry in a document's own reference list disagrees with the registry on title, year or first author's surname, or names an unknown key. |
 
@@ -266,7 +270,7 @@ These do not count:
 - sentences with a modal or conditional word (for numbers);
 - numbers inside quotation marks;
 - headings, tables and blockquotes;
-- sentences in a paper note, which cite the note's entry (see [Paper notes](#paper-notes)).
+- sentences in a paper note outside its commentary sections, which cite the note's entry (see [Paper notes](#paper-notes)).
 
 A non-citation link in the same paragraph counts as evidence when `links_are_evidence` is set, and so does a valid evidence label.
 
@@ -285,6 +289,14 @@ An implied citation is checked less than a written one:
 - An evidence label is still required where `labels.require` asks for one.
 
 A written citation in a sentence replaces the implied one for that sentence.
+
+A note can also hold its author's own commentary, with numbers from other sources or the author's own arithmetic. `[claimcheck.paper_notes] commentary_sections` lists the headings of such sections. A sentence in one of them gets no implied citation, so the normal rules apply:
+
+- An uncited claim gives `uncited-claim`. A link (with `uncited.links_are_evidence`) or a valid evidence label still counts as evidence.
+- A sentence with a written citation is checked against what it cites.
+- The sentence counts as an `uncited-sentence` unless it cites.
+
+A heading matches when its visible text equals a listed text, ignoring case, surrounding spaces and a trailing colon. "Related" matches `## Related:` and `#### related`, but not `## Related work`. Headings match at any level. The section runs to the next heading of the same or a higher level, so its subsections are in it. This is how reference-list headings match too. The default lists no headings.
 
 ### Evidence labels
 

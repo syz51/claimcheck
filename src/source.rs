@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 use sha2::{Digest, Sha256};
 
 use crate::normalize::{self, NChar};
-use crate::numbers::{self, NumTok};
+use crate::numbers::{self, NearMatch, NumTok};
 
 const GRAM: usize = 3;
 
@@ -56,6 +56,17 @@ impl IndexedText {
             for v in t.index_keys() {
                 number_index.entry(v).or_default().push(i as u32);
             }
+        }
+        // Joined values of space-split thousands groups, beside the groups'
+        // own keys, which table cells need.
+        for (i, joined) in numbers::split_groups(&chars, &numbers) {
+            if numbers[i].negative {
+                number_index
+                    .entry(format!("-{joined}"))
+                    .or_default()
+                    .push(i as u32);
+            }
+            number_index.entry(joined).or_default().push(i as u32);
         }
         let mut words: HashMap<String, Vec<u32>> = HashMap::new();
         for (start, _, w) in normalize::words(&chars) {
@@ -207,6 +218,46 @@ impl IndexedText {
         window: usize,
         limit: usize,
     ) -> Vec<(String, usize)> {
+        let mut out: Vec<(String, usize)> = Vec::new();
+        for i in self.nearby(context, target, window) {
+            let value = self.numbers[i].signed();
+            if out.iter().any(|(v, _)| *v == value) {
+                continue;
+            }
+            out.push((value, self.number_line(i)));
+            if out.len() == limit {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The [`IndexedText::nearby_numbers`] candidate that `n` matches
+    /// approximately (see [`NumTok::near_match`]), as how it matched, the
+    /// source value and its line. The closest kind of match wins, then the
+    /// better-ranked candidate.
+    pub fn near_number(
+        &self,
+        n: &NumTok,
+        context: &[String],
+        window: usize,
+        rounding: bool,
+    ) -> Option<(NearMatch, String, usize)> {
+        let target = n.as_f64().unwrap_or(0.0);
+        self.nearby(context, target, window)
+            .into_iter()
+            .filter_map(|i| Some((n.near_match(&self.numbers[i], rounding)?, i)))
+            .min_by_key(|(how, _)| *how)
+            .map(|(how, i)| (how, self.numbers[i].signed(), self.number_line(i)))
+    }
+
+    fn number_line(&self, i: usize) -> usize {
+        self.line_of(self.norm[self.numbers[i].start].off as usize)
+    }
+
+    /// Indexes into `numbers` of every number near a context word, ranked as
+    /// [`IndexedText::nearby_numbers`] describes.
+    fn nearby(&self, context: &[String], target: f64, window: usize) -> Vec<usize> {
         let mut score: HashMap<usize, u32> = HashMap::new();
         for word in context {
             let Some(positions) = self.words.get(word) else {
@@ -238,20 +289,7 @@ impl IndexedText {
             })
             .collect();
         ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
-        let mut out: Vec<(String, usize)> = Vec::new();
-        for (_, _, i) in ranked {
-            let t = &self.numbers[i];
-            let value = t.signed();
-            if out.iter().any(|(v, _)| *v == value) {
-                continue;
-            }
-            let off = self.norm[t.start].off as usize;
-            out.push((value, self.line_of(off)));
-            if out.len() == limit {
-                break;
-            }
-        }
-        out
+        ranked.into_iter().map(|(_, _, i)| i).collect()
     }
 }
 

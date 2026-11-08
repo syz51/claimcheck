@@ -1424,3 +1424,125 @@ fn an_implied_citation_still_needs_an_evidence_label() {
     );
     assert!(f.is_empty(), "{f:#?}");
 }
+
+const MATCH_SOURCE: &str = "Results\nThe mean pricing error is 8.016 on all options, and the arbitrage profit is 1030.90 yen per trade.\nThe cumulative return is 1,218.66% over 800 days. The median spread is 7.6 points.\nTable 4: annual return +0.082 and volatility 0.158 for the reversal strategy.\n\nSeparate section\n\nunrelated filler text that keeps the next line far from every word of the note sentence, padding padding padding padding padding padding padding padding padding padding.\nlater 0.073 here\nThe sample holds 1, 590, 436 pairs, and costs were $1 454 per day.\nThe range of hit rates was 52%–90% across 48%-73% of the windows.\n";
+
+fn match_fixture(toml: &str) -> Fixture {
+    Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[("texts/1.txt", MATCH_SOURCE)],
+        toml,
+    )
+}
+
+fn number_findings(f: &[Finding]) -> Vec<(String, Severity)> {
+    f.iter()
+        .filter(|f| f.rule == Rule::NumberNotInSource)
+        .map(|f| (f.data["number"].as_str().unwrap().to_string(), f.severity))
+        .collect()
+}
+
+#[test]
+fn rounded_numbers_match_nearby_source_values() {
+    let fx = match_fixture("");
+    let f = fx.check(
+        "The mean pricing error is 8.02 and the arbitrage profit is 1,031 yen per trade [1].\n",
+    );
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("8.02".into(), Severity::Info),
+            ("1,031".into(), Severity::Info)
+        ],
+        "{f:#?}"
+    );
+    assert_eq!(
+        f[0].message,
+        "8.02 is rounded from 8.016 in the source text of reference 1"
+    );
+    assert_eq!(f[0].data["match"]["kind"], "rounded");
+    assert_eq!(f[0].data["match"]["value"], "8.016");
+    assert_eq!(f[0].data["match"]["line"], 2);
+    assert_eq!(f[1].data["match"]["value"], "1030.9");
+    // Truncation and numbers under 2 significant digits still warn.
+    let f = fx.check("The cumulative return is 1,218% and the median spread is 8 points [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("1,218%".into(), Severity::Warn)],
+        "{f:#?}"
+    );
+    let f = fx.check("The median spread is 8% over 1,218 days [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("8%".into(), Severity::Warn),
+            ("1,218".into(), Severity::Warn)
+        ],
+        "{f:#?}"
+    );
+}
+
+#[test]
+fn match_rounded_switch_turns_rounding_off() {
+    let fx = match_fixture("[claimcheck.numbers]\nmatch_rounded = false\n");
+    let f = fx.check("The mean pricing error is 8.02 and the annual return is 8.2% for the reversal strategy [1].\n");
+    // Exact percentages of fractions do not need rounding.
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("8.02".into(), Severity::Warn),
+            ("8.2%".into(), Severity::Info)
+        ],
+        "{f:#?}"
+    );
+}
+
+#[test]
+fn fractions_match_nearby_percentages() {
+    let fx = match_fixture("");
+    let f = fx
+        .check("The reversal strategy has an annual return of 8.2% and volatility of 15.8% [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("8.2%".into(), Severity::Info),
+            ("15.8%".into(), Severity::Info)
+        ],
+        "{f:#?}"
+    );
+    assert_eq!(
+        f[0].message,
+        "8.2% is 0.082 as a percentage in the source text of reference 1"
+    );
+    assert_eq!(f[0].data["match"]["kind"], "percent");
+    // 0.073 occurs, but far from every context word of the sentence.
+    let f = fx.check("The reversal strategy has an annual return of 7.3% [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("7.3%".into(), Severity::Warn)],
+        "{f:#?}"
+    );
+}
+
+#[test]
+fn space_split_thousands_groups_match() {
+    let fx = match_fixture("");
+    let f = fx.check("The sample holds 1,590,436 pairs and costs were $1,454 per day; 590 and 454 also occur [1].\n");
+    assert_eq!(number_findings(&f), [], "{f:#?}");
+}
+
+#[test]
+fn a_dash_after_a_percent_is_a_range() {
+    let fx = match_fixture("");
+    let f = fx.check("Hit rates ranged over 52%–90% in 48%-73% of the windows [1].\n");
+    assert_eq!(number_findings(&f), [], "{f:#?}");
+    // A negative number still needs a negative source number. The source
+    // indexes a number after a percent and a dash under both signs, since
+    // extracted table cells can run together as in `-18.94%-43.50%`.
+    let f = fx.check("Hit rates fell to -52% in (-73%) of the windows [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("-52%".into(), Severity::Warn)],
+        "{f:#?}"
+    );
+}

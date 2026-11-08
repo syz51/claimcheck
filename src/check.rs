@@ -11,7 +11,7 @@ use crate::doc::{self, Block, BlockKind, Doc, MARK, Unit};
 use crate::finding::{Evidence, Finding, Rule, Severity};
 use crate::matcher::{self, Approx};
 use crate::normalize::{self, NChar};
-use crate::numbers::{self, NumTok};
+use crate::numbers::{self, NearMatch, NumTok};
 use crate::registry::{Depth, Registry};
 use crate::source::{IndexedText, TextEntry, hex};
 
@@ -952,6 +952,52 @@ impl<'a> Ctx<'a> {
                 .any(|(_, _, t)| n.tok.lookup_keys().iter().any(|v| t.has_number(v)))
             {
                 self.stats.numbers_found += 1;
+                continue;
+            }
+            let cfg = &self.p.cfg.numbers;
+            let near = texts.iter().find_map(|(r, e, t)| {
+                t.near_number(&n.tok, &n.context, cfg.context_window, cfg.match_rounded)
+                    .map(|m| (*r, *e, m))
+            });
+            if let Some((r, e, (how, value, src_line))) = near {
+                self.stats.numbers_found += 1;
+                let key = self.key(r);
+                let how_text = match how {
+                    NearMatch::Rounded => format!("is rounded from {value}"),
+                    NearMatch::Percent => format!("is {value} as a percentage"),
+                    NearMatch::RoundedPercent => {
+                        format!("is rounded from {value} as a percentage")
+                    }
+                };
+                let msg = format!(
+                    "{} {how_text} in the source text of {}",
+                    n.shown,
+                    refs_list(&[key])
+                );
+                let mut data = Map::new();
+                data.insert("number".into(), json!(n.shown));
+                data.insert("sentence".into(), json!(sentence));
+                data.insert("value".into(), json!(n.tok.signed()));
+                data.insert("references".into(), json!(keys));
+                data.insert(
+                    "match".into(),
+                    json!({"kind": how.as_str(), "reference": key, "path": e.display, "line": src_line, "value": value}),
+                );
+                if !survivors.is_empty() {
+                    data.insert("survivors".into(), Value::Object(survivors.clone()));
+                }
+                let evidence = vec![Evidence {
+                    path: e.display.clone(),
+                    locator: format!("line {src_line}: {value}"),
+                }];
+                self.emit(
+                    Rule::NumberNotInSource,
+                    Severity::Info,
+                    line,
+                    msg,
+                    evidence,
+                    data,
+                );
                 continue;
             }
             if !missing.is_empty() {

@@ -113,6 +113,7 @@ year_max = 2100
 context_window = 150   # characters searched around a context word for nearby numbers
 nearest = 3            # nearby numbers reported
 links_are_evidence = false  # a non-citation link in the same sentence lowers number-not-in-source to info
+match_rounded = true   # a number may match a nearby source number it rounds (info)
 
 [claimcheck.claims]
 number_kind = "result" # kind suggested by a checked number (info only, never an error)
@@ -166,7 +167,7 @@ A severity override sets the severity of every finding of the rule, whatever sev
 | `quote-not-found` | error | Quoted text attached to a citation does not occur in the cited source text. Below `error_below` similarity it is an error; between that and verbatim, a warning. Both report the closest match with its line and similarity. |
 | `source-text-missing` | warn | A quotation or number needs a cited source's text, but the registry lists none or the file cannot be read. The check is undecided, never "supported". |
 | `source-text-changed` | warn | A source text file's SHA-256 differs from the registry's `sha256`. The text is still used. |
-| `number-not-in-source` | warn | A number in a citing sentence occurs in none of the cited source texts. Up to `nearest` numbers near the sentence's words in the source are reported. It is info when `numbers.links_are_evidence` is set and the sentence holds a non-citation link. |
+| `number-not-in-source` | warn | A number in a citing sentence occurs in none of the cited source texts. Up to `nearest` numbers near the sentence's words in the source are reported. It is info when `numbers.links_are_evidence` is set and the sentence holds a non-citation link, and when the number matches a nearby source number only as a rounding or a percentage (see Numbers). |
 | `depth-insufficient` | error | A sentence makes a claim of a kind that needs deeper inspection than the cited reference's `depth`. It is info when the kind is uncertain (see below). |
 | `uncited-claim` | warn | A sentence makes a quantitative or comparative claim with no citation, link or evidence label. A sentence in a paper note cites the note's entry (see [Paper notes](#paper-notes)). |
 | `evidence-label` | warn | A label is outside the vocabulary but close to it (error), a required label is missing (warn), or a label's `min_depth` is not met (error). |
@@ -215,7 +216,16 @@ A number in a sentence that cites a reference with text must occur in that text.
 - `1,234` = `1234`, `.5` = `0.5` and `12.30` = `12.3`;
 - `12.3 %` matches `12.3%`;
 - `1.2k`, `3M` and `4bn` also match their scaled values;
-- a negative number (`-2.1`, `(−2.1)`) needs a negative number in the source. An unsigned number ("fell by 2.1") matches either sign.
+- a negative number (`-2.1`, `(−2.1)`) needs a negative number in the source. An unsigned number ("fell by 2.1") matches either sign;
+- a dash right after `%`, `‰` or `pp` is a range, not a minus sign: `52%–90%` holds 52% and 90%. In a source text such a number also counts as negative, because extracted table cells can run together (`-18.94%-43.50%`);
+- in a source text, thousands groups split by a space or by a comma and a space (`1, 590, 436`, `$1 454`) also match the joined number (1,590,436 and 1,454). The groups keep their own values too, so table cells still match. A run starts with one to three digits and continues with groups of exactly three; a group with a fraction ends it.
+
+A number that matches no source number exactly may match one of the source numbers near the sentence's context words: the same candidates `number-not-in-source` reports as nearby, found within `context_window` characters. The match is reported as an info `number-not-in-source` finding that names the source value, such as "8.02 is rounded from 8.016 in the source text of reference 1". Its `data.match` holds the `kind`, `reference`, `path`, `line` and source `value`. Two kinds of match count:
+
+- **Rounding** (`kind` `rounded`): the source number has more fractional digits than the document number has as written, and rounding it half-up or half-even to those digits gives the document number. So 8.016 matches 8.02, 1030.90 matches 1,031 and 41.8713 matches 41.9. Truncation does not match: 1,218.66 is not 1,218. A document number with fewer than 2 significant digits never matches by rounding, so 8 does not match 7.6, but 8.0 matches 7.96. `match_rounded = false` in `[claimcheck.numbers]` turns rounding off.
+- **Fraction as a percentage** (`kind` `percent`, or `rounded-percent`): a document percentage (`%` or `pp`, not `‰`) matches a source number between 0 and 1 without a percent sign whose value × 100 equals it, so 8.2% matches 0.082. With rounding on, the value × 100 may also round to it as above, so 15.8% matches 0.1578.
+
+Signs follow the exact rule: a negative document number needs a negative source number. When several candidates match, an exact percentage wins over a rounding. Among matches of one kind, the candidate near more context words wins, then the one closest in value.
 
 These are not checked:
 
@@ -323,7 +333,7 @@ A checked sentence is in at most one unit. These are in neither: table rows that
 
 ## Limits
 
-- **Strings, not meaning.** A quotation that occurs verbatim is supported only in the sense that the words are in the source. `claimcheck` does not judge whether the source supports the claim made with them. Numbers are matched by value, so a number that occurs anywhere in the source counts as found, even when it measures something else.
+- **Strings, not meaning.** A quotation that occurs verbatim is supported only in the sense that the words are in the source. `claimcheck` does not judge whether the source supports the claim made with them. Numbers are matched by value, so a number that occurs anywhere in the source counts as found, even when it measures something else. A rounding or percentage match is weaker still: any nearby source number that rounds to the document number counts, so it can be a coincidence. Such matches are info findings so that they can be reviewed.
 - **Keyword heuristics.** Claim kinds and uncited claims come from keyword and number heuristics. Plans, design parameters, imperatives ("Keep 500 items in reserve") and negated statements can still be reported as uncited claims. Lower `uncited-claim` to `info` or turn it off where that is noise.
 - **Registry depth.** `depth-insufficient` is only as good as the registry's `depth`.
 - **Source texts.** Text extracted from PDFs may lose tables, formulas and reading order. A quotation from a table or a figure may then be reported as not found.

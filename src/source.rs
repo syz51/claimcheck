@@ -27,6 +27,9 @@ pub struct IndexedText {
     /// Numbers sorted by position in `norm`.
     numbers: Vec<NumTok>,
     number_index: HashMap<String, Vec<u32>>,
+    /// Space-split thousands groups (see [`numbers::split_groups`]) read as
+    /// one number, by the index of their first group in `numbers`.
+    groups: HashMap<usize, NumTok>,
     /// Lowercase words → positions in `norm`.
     words: HashMap<String, Vec<u32>>,
 }
@@ -59,6 +62,7 @@ impl IndexedText {
         }
         // Joined values of space-split thousands groups, beside the groups'
         // own keys, which table cells need.
+        let mut groups = HashMap::new();
         for (i, joined) in numbers::split_groups(&chars, &numbers) {
             if numbers[i].negative {
                 number_index
@@ -66,7 +70,16 @@ impl IndexedText {
                     .or_default()
                     .push(i as u32);
             }
-            number_index.entry(joined).or_default().push(i as u32);
+            number_index
+                .entry(joined.clone())
+                .or_default()
+                .push(i as u32);
+            let tok = NumTok {
+                value: joined,
+                separated: true,
+                ..numbers[i].clone()
+            };
+            groups.insert(i, tok);
         }
         let mut words: HashMap<String, Vec<u32>> = HashMap::new();
         for (start, _, w) in normalize::words(&chars) {
@@ -83,6 +96,7 @@ impl IndexedText {
             grams,
             numbers,
             number_index,
+            groups,
             words,
         }
     }
@@ -234,7 +248,9 @@ impl IndexedText {
 
     /// The [`IndexedText::nearby_numbers`] candidate that `n` matches
     /// approximately (see [`NumTok::near_match`]), as how it matched, the
-    /// source value and its line. The closest kind of match wins, then the
+    /// source value (in full for a [`NearMatch::Scaled`] match) and its line.
+    /// A candidate that starts space-split thousands groups is also tried as
+    /// the joined number. The closest kind of match wins, then the
     /// better-ranked candidate.
     pub fn near_number(
         &self,
@@ -246,9 +262,20 @@ impl IndexedText {
         let target = n.as_f64().unwrap_or(0.0);
         self.nearby(context, target, window)
             .into_iter()
-            .filter_map(|i| Some((n.near_match(&self.numbers[i], rounding)?, i)))
-            .min_by_key(|(how, _)| *how)
-            .map(|(how, i)| (how, self.numbers[i].signed(), self.number_line(i)))
+            .flat_map(|i| {
+                std::iter::once(&self.numbers[i])
+                    .chain(self.groups.get(&i))
+                    .map(move |s| (i, s))
+            })
+            .filter_map(|(i, s)| Some((n.near_match(s, rounding)?, i, s)))
+            .min_by_key(|(how, ..)| *how)
+            .map(|(how, i, s)| {
+                let value = match how {
+                    NearMatch::Scaled(_) => s.signed_full(),
+                    _ => s.signed(),
+                };
+                (how, value, self.number_line(i))
+            })
     }
 
     fn number_line(&self, i: usize) -> usize {

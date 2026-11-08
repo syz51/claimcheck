@@ -13,7 +13,7 @@ use crate::matcher::{self, Approx};
 use crate::normalize::{self, NChar};
 use crate::numbers::{self, NumTok};
 use crate::registry::{Depth, Registry};
-use crate::source::{IndexedText, TextEntry};
+use crate::source::{IndexedText, TextEntry, hex};
 
 /// Registry, configuration and the shared source-text cache for one run.
 pub struct Project {
@@ -171,10 +171,15 @@ pub struct Stats {
     pub numbers_checked: usize,
     pub numbers_found: usize,
     pub claims_classified: usize,
+    /// Sentences (or non-prose blocks) with text that cite a reference, or
+    /// that are part of a blockquote checked as a cited quotation.
+    pub citing_sentences: usize,
+    /// [`normalize::sentence_key`] of each citing sentence.
+    pub citing_sentence_keys: BTreeSet<[u8; 8]>,
 }
 
 impl Stats {
-    pub fn add(&mut self, o: &Stats) {
+    pub fn add(&mut self, o: Stats) {
         self.files += o.files;
         self.citations += o.citations;
         self.citations_resolved += o.citations_resolved;
@@ -183,6 +188,21 @@ impl Stats {
         self.numbers_checked += o.numbers_checked;
         self.numbers_found += o.numbers_found;
         self.claims_classified += o.claims_classified;
+        self.citing_sentences += o.citing_sentences;
+        self.citing_sentence_keys.extend(o.citing_sentence_keys);
+    }
+
+    /// The `rf.measure/1` record of the citing sentences, for `--measure`.
+    /// Keys sort as bytes, which is their order as hex strings.
+    pub fn measure(&self) -> Value {
+        let keys: Vec<String> = self.citing_sentence_keys.iter().map(|k| hex(k)).collect();
+        json!({
+            "schema": "rf.measure/1",
+            "tool": "claimcheck",
+            "unit": "citing-sentence",
+            "count": self.citing_sentences,
+            "keys": keys,
+        })
     }
 }
 
@@ -199,6 +219,21 @@ struct Ctx<'a> {
 
 fn quote_excerpt(s: &str, max: usize) -> String {
     normalize::excerpt(s, max)
+}
+
+/// A unit's text for its `rf.measure/1` key: without citation markers or the
+/// whitespace before each, so "helps [1]." and "helps.[1]" both read
+/// "helps.", and moving a citation within a sentence keeps its key.
+fn key_text(block: &Block, u: &Unit) -> String {
+    let mut t = String::new();
+    for p in &block.chars[u.start..u.end] {
+        if p.c == MARK {
+            t.truncate(t.trim_end().len());
+        } else {
+            t.push(p.c);
+        }
+    }
+    t
 }
 
 fn refs_list(keys: &[&str]) -> String {
@@ -391,10 +426,19 @@ impl<'a> Ctx<'a> {
                 }
             }
             let mut block_claims = false;
+            let cited_quote = block
+                .quote_group
+                .is_some_and(|g| handled_groups.contains(&g));
             for u in &units {
                 let nums = self.numbers_in(block, u, &quoted);
                 let refs = self.refs_of(&u.cites);
                 let line = doc.line_of(unit_offset(block, u));
+                if (cited_quote || !u.cites.is_empty())
+                    && let Some(key) = normalize::sentence_key(&key_text(block, u))
+                {
+                    self.stats.citing_sentences += 1;
+                    self.stats.citing_sentence_keys.insert(key);
+                }
                 if !refs.is_empty() {
                     if !nums.is_empty() {
                         let linked = block.has_link(u.start, u.end);

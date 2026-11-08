@@ -14,6 +14,7 @@
 //!   dashes between digits are kept, so `-2.1` differs from `2.1` and
 //!   `10-20` from `1020`.
 
+use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
@@ -226,6 +227,21 @@ pub fn excerpt(text: &str, max: usize) -> String {
     out
 }
 
+/// The `rf.measure/1` key of a sentence: the first 8 bytes of the SHA-256 of
+/// its text in NFC, with whitespace collapsed and trimmed as in a finding's
+/// `sentence` but not truncated. `None` when no text remains.
+pub fn sentence_key(text: &str) -> Option<[u8; 8]> {
+    let nfc: String = text.nfc().collect();
+    let text = excerpt(&nfc, usize::MAX);
+    if text.is_empty() {
+        return None;
+    }
+    let digest = Sha256::digest(text.as_bytes());
+    let mut key = [0; 8];
+    key.copy_from_slice(&digest[..8]);
+    Some(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +310,21 @@ mod tests {
         let (sk, offs) = skeleton(&n);
         assert_eq!(sk, vec!['a', 'b', 'f', 'i']);
         assert_eq!(offs, vec![0, 1, 3, 3]);
+    }
+
+    #[test]
+    fn sentence_key_hashes_collapsed_untruncated_nfc_text() {
+        // printf 'It reaches 12.3 %% accuracy.' | shasum -a 256
+        let want = Some([0x52, 0x79, 0x55, 0x04, 0x1d, 0x16, 0x02, 0x6a]);
+        assert_eq!(sentence_key("It reaches 12.3 %\n   accuracy. "), want);
+        assert_eq!(sentence_key(" It reaches 12.3 % accuracy."), want);
+        assert_eq!(sentence_key("Caf\u{e9}."), sentence_key("Cafe\u{301}."));
+        assert_eq!(sentence_key(" \n "), None);
+        let long = "a".repeat(250);
+        assert_ne!(
+            sentence_key(&format!("{long} b")),
+            sentence_key(&format!("{long} c"))
+        );
     }
 
     #[test]

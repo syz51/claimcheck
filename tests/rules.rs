@@ -599,6 +599,93 @@ fn cli_exit_codes_and_jsonl() {
 }
 
 #[test]
+fn measure_counts_citing_sentences() {
+    let doc_a = "# Heading [1]\n\n\
+        Retrieval helps [1]. No citation here.\nIt reaches 12.3 % accuracy\n  [1].\n\n\
+        | Model | Score |\n| --- | --- |\n| A | 71.2 [1] |\n\n\
+        As the paper notes [1]:\n\n\
+        > We study financial evidence retrieval for annual reports and more.\n\n\
+        [1]\n\n\
+        ## References\n\n1. Ada Example. Synthetic Paper 1. 2025.\n";
+    let root = temp_project(&[
+        (
+            "research.toml",
+            "[project]\nname = \"t\"\n\n[claimcheck]\npaths = [\"docs\"]\n",
+        ),
+        ("docs/a.md", doc_a),
+        ("docs/b.md", "Retrieval helps.[1] See [8] too.\n"),
+    ]);
+    let line = reference("1", Some("full"), &[]).to_string();
+    std::fs::write(root.join("references.jsonl"), format!("{line}\n")).unwrap();
+    let bin = env!("CARGO_BIN_EXE_claimcheck");
+    let run = |args: &[&str]| {
+        let out = Command::new(bin)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    let stdout = run(&["check", "--format", "jsonl", "--measure"]);
+    let rows: Vec<serde_json::Value> = stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let measures: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|r| r["schema"] == "rf.measure/1")
+        .collect();
+    assert_eq!(measures.len(), 1, "{stdout}");
+    assert_eq!(
+        rows.last(),
+        Some(measures[0]),
+        "the record follows the findings"
+    );
+    // Counted: two sentences, the table row, the blockquote and the sentence
+    // that cites it in a.md; two sentences in b.md. Not counted: the heading,
+    // the uncited sentence, the paragraph of only a citation and the
+    // reference list. "Retrieval helps" is one key in both files, wherever
+    // its citation stands. Keys hash the text without citation markers or
+    // the whitespace before them, e.g.
+    // printf 'It reaches 12.3 %% accuracy.' | shasum -a 256
+    let want = json!({
+        "schema": "rf.measure/1",
+        "tool": "claimcheck",
+        "unit": "citing-sentence",
+        "count": 7,
+        "keys": [
+            "45195695e16dae10", // As the paper notes:
+            "491aee4147607ebd", // We study financial evidence retrieval for annual reports and more.
+            "527955041d16026a", // It reaches 12.3 % accuracy.
+            "7c6f9ee69ba13da4", // See too.
+            "d453de4d99621a35", // A 71.2
+            "e94b58cad0101603", // Retrieval helps.
+        ],
+    });
+    assert_eq!(measures[0], &want);
+
+    let plain = run(&["check", "--format", "jsonl"]);
+    assert!(!plain.contains("rf.measure/1"), "{plain}");
+    assert_eq!(plain.lines().count(), rows.len() - 1);
+
+    // In text mode the record is the last line, after the summary.
+    let text = run(&["check", "--measure", "--summary"]);
+    assert!(text.contains("citations 8"), "{text}");
+    let last = text.lines().last().unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(last).unwrap(),
+        want
+    );
+}
+
+#[test]
 fn quote_that_cuts_a_number_is_not_verbatim() {
     let fx = basic();
     let f = fx.check("They write that \"our method reaches 12\" [1].\n");

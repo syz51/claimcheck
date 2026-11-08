@@ -265,7 +265,7 @@ A label is the leading `Label:` or `**Label:**` of a paragraph or list item. Wit
 - a missing label when `require` asks for one (warn);
 - a cited reference shallower than the label's `min_depth` (error, or info when its depth is unknown).
 
-Each of these findings has `paragraph_key` in its `data`. It is the [`rf.measure/1` key](#denominator-rfmeasure1) of the paragraph's first sentence with text, or `null` when the paragraph has no text besides citations. So the same finding in two paragraphs has distinct data, while a paragraph keeps its key when it moves or when its later sentences change. Lab counts an introduced finding by its message and data, so this lets it count each paragraph.
+Each of these findings has `paragraph_key` in its `data`: 16 hex digits of a SHA-256 hash. The hash covers the paragraph's first sentence with a letter or digit, without citation markers, and the reference keys that sentence cites. A paragraph without such a sentence hashes only the keys it cites. Sentences are split as claimcheck splits them before it checks inline quotations, so the key does not depend on the registry or the configuration. So the same finding in two paragraphs has distinct data, unless their first sentences have the same text and citations. A paragraph keeps its key when it moves, and when a sentence after its first one changes. Lab counts an introduced finding by its message and data, so this lets it count each paragraph.
 
 ### Reference lists
 

@@ -480,11 +480,11 @@ fn evidence_label_findings_carry_a_paragraph_key() {
         k.sort();
         k
     };
-    // The rf.measure/1 key of the paragraph's first unit, e.g.
-    // printf 'Retrieval helps.' | shasum -a 256
+    // The first sentence without markers, U+001F, then its citation keys:
+    // printf 'Retrieval helps.\0371' | shasum -a 256
     let f = fx.check("Retrieval helps [1]. It is cheap.\n\nReranking helps [1].\n");
     assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Warn); 2]);
-    assert_eq!(f[0].data["paragraph_key"], json!("e94b58cad0101603"));
+    assert_eq!(f[0].data["paragraph_key"], json!("7c11fc4ccd560cb2"));
     let two = keys(&f);
     assert_ne!(two[0], two[1], "two unlabeled paragraphs, two keys");
     // Moved below another paragraph, each keeps its key; so does a paragraph
@@ -504,10 +504,34 @@ fn evidence_label_findings_carry_a_paragraph_key() {
     assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Error); 2]);
     let k = keys(&f);
     assert_ne!(k[0], k[1]);
-    // A paragraph with no text besides citations has no key.
-    let f = fx.check("[1]\n");
-    assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Warn)]);
-    assert_eq!(f[0].data["paragraph_key"], json!(null));
+    // Paragraphs with the same text but other citations differ, also when
+    // they have no text besides citations.
+    for doc in ["See [1].\n\nSee [2].\n", "[1].\n\n[2].\n", "[1]\n\n[2]\n"] {
+        let f = fx.check(doc);
+        assert_eq!(
+            rules(&f),
+            [(Rule::EvidenceLabel, Severity::Warn); 2],
+            "{doc}"
+        );
+        let k = keys(&f);
+        assert_ne!(k[0], k[1], "{doc}");
+        assert!(f[0].data["paragraph_key"].is_string(), "{doc}");
+    }
+    // The key does not depend on whether an inline quotation is checked
+    // (and its sentences joined), which turns on the registry.
+    let quote = "The report said “retrieval helps. It cuts the time spent on annual reports by much” [1].\n";
+    let checked = fx.check(quote);
+    let bare = Fixture::new(&[], &[], toml).check(quote);
+    let label = |f: &[Finding]| {
+        let l: Vec<_> = f
+            .iter()
+            .filter(|f| f.rule == Rule::EvidenceLabel)
+            .map(|f| f.data["paragraph_key"].clone())
+            .collect();
+        assert_eq!(l.len(), 1, "{f:#?}");
+        l[0].clone()
+    };
+    assert_eq!(label(&checked), label(&bare));
 }
 
 #[test]

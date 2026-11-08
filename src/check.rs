@@ -521,7 +521,7 @@ impl<'a> Ctx<'a> {
                 block_claims |= !nums.is_empty();
             }
             if block.is_prose() && !self.p.cfg.labels.vocabulary.is_empty() {
-                self.check_label(block, &units, block_claims);
+                self.check_label(block, block_claims);
             }
         }
     }
@@ -1219,16 +1219,43 @@ impl<'a> Ctx<'a> {
         true
     }
 
-    fn check_label(&mut self, block: &Block, units: &[Unit], claims: bool) {
+    /// The `data` of an `evidence-label` finding about `block`, starting with
+    /// `paragraph_key`. The key tells apart paragraphs whose findings would
+    /// otherwise share a message and data, and survives a move. It hashes
+    /// the paragraph's first sentence with a letter or digit, without
+    /// citation markers, together with the citation keys of that sentence.
+    /// A paragraph without such a sentence hashes only its citation keys.
+    /// Sentences are split before inline quotations are joined, so the key
+    /// does not depend on the registry or the configuration.
+    fn label_data(&self, block: &Block) -> Map<String, Value> {
+        let units = doc::units(block);
+        let first = units
+            .iter()
+            .map(|u| (u, key_text(block, u)))
+            .find(|(_, t)| t.chars().any(char::is_alphanumeric));
+        let (text, cites) = match first {
+            Some((u, t)) => (t, u.cites.clone()),
+            None => (String::new(), block.cites_in(0, block.chars.len())),
+        };
+        let mut keys: Vec<&str> = cites
+            .iter()
+            .flat_map(|&c| self.doc.citations[c as usize].keys.iter())
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        // U+001F separates the text from the keys and is not whitespace, so
+        // the hashed text is never empty.
+        let key = normalize::sentence_key(&format!("{}\u{1F}{}", text.trim(), keys.join(" ")))
+            .expect("the separator is text");
+        let mut data = Map::new();
+        data.insert("paragraph_key".into(), json!(hex(&key)));
+        data
+    }
+
+    fn check_label(&mut self, block: &Block, claims: bool) {
         let labels = &self.p.cfg.labels;
         let line = self.doc.line_of(block.first_offset());
-        // Tells apart the findings of paragraphs that would otherwise share
-        // a message and data, wherever the paragraph moves: the
-        // `rf.measure/1` key of its first unit with text.
-        let paragraph_key = units
-            .iter()
-            .find_map(|u| normalize::sentence_key(&key_text(block, u)))
-            .map(|k| hex(&k));
         let label = doc::leading_label(block);
         let valid = label
             .as_ref()
@@ -1240,10 +1267,9 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .find(|v| v.eq_ignore_ascii_case(l) || edit_distance(v, l) <= 2)
         {
-            let mut data = Map::new();
+            let mut data = self.label_data(block);
             data.insert("label".into(), json!(l));
             data.insert("suggestion".into(), json!(near));
-            data.insert("paragraph_key".into(), json!(paragraph_key));
             self.emit(
                 Rule::EvidenceLabel,
                 Severity::Error,
@@ -1261,9 +1287,8 @@ impl<'a> Ctx<'a> {
             LabelRequire::Claims => claims || !cites.is_empty(),
         };
         if needs && valid.is_none() {
-            let mut data = Map::new();
+            let mut data = self.label_data(block);
             data.insert("vocabulary".into(), json!(labels.vocabulary));
-            data.insert("paragraph_key".into(), json!(paragraph_key));
             self.emit(
                 Rule::EvidenceLabel,
                 Severity::Warn,
@@ -1287,12 +1312,11 @@ impl<'a> Ctx<'a> {
             if depth.is_some_and(|d| d >= min) {
                 continue;
             }
-            let mut data = Map::new();
+            let mut data = self.label_data(block);
             data.insert("label".into(), json!(l));
             data.insert("reference".into(), json!(key));
             data.insert("depth".into(), json!(depth));
             data.insert("required".into(), json!(min));
-            data.insert("paragraph_key".into(), json!(paragraph_key));
             let (sev, msg) = match depth {
                 Some(d) => (
                     Severity::Error,

@@ -258,11 +258,13 @@ fn rounded(value: &str, places: usize) -> Option<[String; 2]> {
 
 /// Numbers written with a space, or a comma and a space, between thousands
 /// groups: `1, 590, 436` and `1 454`, which [`scan`] reads as separate
-/// numbers. Each is returned as the index of its first token in `toks` and
-/// its joined canonical value. A run starts with one to three digits and
-/// continues with groups of exactly three; a group with a fraction or glued
-/// to a letter ends it, so `1 454.5` and `12 345abc` are not joined.
-pub fn split_groups(chars: &[char], toks: &[NumTok]) -> Vec<(usize, String)> {
+/// numbers. Each run is returned as the index of its first token in `toks`
+/// and the joined canonical values of its prefixes of two or more groups,
+/// the whole run first: `970 436 241` gives 970436241, then 970436, since a
+/// table row's next cell can continue a run. A run starts with one to three
+/// digits and continues with groups of exactly three; a group with a fraction
+/// or glued to a letter ends it, so `1 454.5` and `12 345abc` are not joined.
+pub fn split_groups(chars: &[char], toks: &[NumTok]) -> Vec<(usize, Vec<String>)> {
     let gap = |a: &NumTok, b: &NumTok| matches!(&chars[a.end..b.start], [' '] | [',', ' ']);
     let plain = |t: &NumTok| {
         !t.decimal && !t.separated && !t.dotted && !t.glued_right && t.scaled.is_none()
@@ -287,11 +289,17 @@ pub fn split_groups(chars: &[char], toks: &[NumTok]) -> Vec<(usize, String)> {
             j += 1;
         }
         if j > i {
-            let digits: String = toks[i..=j]
+            let mut digits = String::new();
+            let mut joined: Vec<String> = toks[i..=j]
                 .iter()
-                .flat_map(|t| &chars[t.start..t.end])
+                .map(|t| {
+                    digits.extend(&chars[t.start..t.end]);
+                    canonical(&digits, "")
+                })
+                .skip(1)
                 .collect();
-            out.push((i, canonical(&digits, "")));
+            joined.reverse();
+            out.push((i, joined));
             i = j + 1;
         } else {
             i += 1;
@@ -723,16 +731,16 @@ mod tests {
         let chars: Vec<char> = s.chars().collect();
         split_groups(&chars, &scan(&chars))
             .into_iter()
-            .map(|(_, v)| v)
+            .map(|(_, v)| v.join("/"))
             .collect()
     }
 
     #[test]
     fn space_split_thousands_groups() {
-        assert_eq!(groups("users 1, 590, 436 in total"), ["1590436"]);
+        assert_eq!(groups("users 1, 590, 436 in total"), ["1590436/1590"]);
         assert_eq!(
             groups("profit $1 454 and 26, 603, 038"),
-            ["1454", "26603038"]
+            ["1454", "26603038/26603"]
         );
         assert_eq!(groups("1 045"), ["1045"]);
         // A group of other than three digits, a fraction or a glued letter ends a run.
@@ -740,6 +748,11 @@ mod tests {
         assert!(groups("1,234 567 and 1.5 234").is_empty());
         // A run starts at its first group.
         assert_eq!(groups("2020 454 123"), Vec::<String>::new());
-        assert_eq!(groups("12 345 678"), ["12345678"]);
+        assert_eq!(groups("12 345 678"), ["12345678/12345"]);
+        // Every prefix of two or more groups, the whole run first.
+        assert_eq!(
+            groups("496 $970 436 241 $1 002 020"),
+            ["970436241/970436", "1002020/1002"]
+        );
     }
 }

@@ -1425,6 +1425,92 @@ fn an_implied_citation_still_needs_an_evidence_label() {
     assert!(f.is_empty(), "{f:#?}");
 }
 
+#[test]
+fn commentary_sections_of_a_note_get_no_implied_citation() {
+    let toml =
+        "[claimcheck.paper_notes]\ncommentary_sections = [\"Trading implications\", \"Related\"]\n";
+    let fx = Fixture::new(
+        &[note_entry(
+            "7",
+            Some("full"),
+            &["texts/p.txt"],
+            "papers/p.md",
+        )],
+        &[("texts/p.txt", SOURCE)],
+        toml,
+    );
+    let rules_at = |md: &str| -> Vec<(Rule, Severity, usize)> {
+        let (f, _) = fx.check_as("papers/p.md", md);
+        f.iter().map(|f| (f.rule, f.severity, f.order.1)).collect()
+    };
+    let note = "# Paper\n\
+        \n\
+        Accuracy is 55.5% overall.\n\
+        \n\
+        ## Trading implications\n\
+        \n\
+        Fees take 55.5% of the spread.\n\
+        \n\
+        Accuracy is 55.5% overall [7].\n\
+        \n\
+        Fees take 55.5% per [the fee page](https://example.org/fees).\n\
+        \n\
+        ### Sizing\n\
+        \n\
+        Fees take 55.5% of the spread.\n\
+        \n\
+        ## Method notes\n\
+        \n\
+        Accuracy is 55.5% overall.\n";
+    assert_eq!(
+        rules_at(note),
+        [
+            // A heading that is not listed: the implied citation, as now.
+            (Rule::NumberNotInSource, Severity::Warn, 3),
+            // A listed heading: uncited-claim, not checked against the paper.
+            (Rule::UncitedClaim, Severity::Warn, 7),
+            // An explicit citation is checked as before.
+            (Rule::NumberNotInSource, Severity::Warn, 9),
+            // A linked sentence (line 11) is exempt. A lower-level heading
+            // stays in the section.
+            (Rule::UncitedClaim, Severity::Warn, 15),
+            // A heading of the same level ends it.
+            (Rule::NumberNotInSource, Severity::Warn, 19),
+        ]
+    );
+    let (_, m) = fx.check_as("papers/p.md", note);
+    assert_eq!(m, (3, 3));
+    // Headings match at any level, ignoring case and a trailing colon, but
+    // only as whole heading text.
+    for heading in ["# related", "#### RELATED:", "## Related ："] {
+        let md = format!("{heading}\n\nFees take 55.5% of the spread.\n");
+        assert_eq!(
+            rules_at(&md),
+            [(Rule::UncitedClaim, Severity::Warn, 3)],
+            "{heading}"
+        );
+    }
+    let md = "## Related work\n\nFees take 55.5% of the spread.\n";
+    assert_eq!(rules_at(md), [(Rule::NumberNotInSource, Severity::Warn, 3)]);
+    // The default lists no section: every uncited sentence cites the entry,
+    // and a link only lowers a missing number when numbers.links_are_evidence is set.
+    let (f, _) = note_fixture(&[note_entry(
+        "7",
+        Some("full"),
+        &["texts/p.txt"],
+        "papers/p.md",
+    )])
+    .check_as("papers/p.md", note);
+    assert_eq!(
+        rules(&f),
+        [(Rule::NumberNotInSource, Severity::Warn); 6],
+        "{f:#?}"
+    );
+    // Outside a paper note the setting changes nothing.
+    let (f, _) = fx.check_as("notes.md", "## Related\n\nAccuracy is 55.5% overall [7].\n");
+    assert_eq!(rules(&f), [(Rule::NumberNotInSource, Severity::Warn)]);
+}
+
 const MATCH_SOURCE: &str = "Results\nThe mean pricing error is 8.016 on all options, and the arbitrage profit is 1030.90 yen per trade.\nThe cumulative return is 1,218.66% over 800 days. The median spread is 7.6 points.\nTable 4: annual return +0.082 and volatility 0.158 for the reversal strategy.\n\nSeparate section\n\nunrelated filler text that keeps the next line far from every word of the note sentence, padding padding padding padding padding padding padding padding padding padding.\nlater 0.073 here\nThe sample holds 1, 590, 436 pairs, and costs were $1 454 per day.\nThe range of hit rates was 52%–90% across 48%-73% of the windows.\n";
 
 fn match_fixture(toml: &str) -> Fixture {

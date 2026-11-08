@@ -475,7 +475,8 @@ impl<'a> Ctx<'a> {
         let doc = self.doc;
         let mut handled_groups: BTreeSet<u32> = BTreeSet::new();
         self.blockquotes(&mut handled_groups);
-        for block in &doc.blocks {
+        let commentary = doc.under_headings(&self.p.cfg.paper_notes.commentary_sections);
+        for (block, in_commentary) in doc.blocks.iter().zip(commentary) {
             if block.in_reference_list {
                 if block.is_prose() {
                     self.reference_entry(block);
@@ -550,7 +551,9 @@ impl<'a> Ctx<'a> {
                         .filter(|n| !spans.iter().any(|&(s, e)| s <= n.at && n.at < e))
                         .cloned()
                         .collect();
-                    if let Some(r) = self.implied {
+                    // A commentary section holds the note author's own text,
+                    // which the note's entry does not cite.
+                    if let Some(r) = self.implied.filter(|_| !in_commentary) {
                         // The note's own entry cites the sentence. Its numbers
                         // are checked only against a readable text, and its
                         // quotations and claim depth not at all: see README,

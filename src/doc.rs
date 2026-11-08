@@ -443,6 +443,30 @@ fn heading_key(s: &str) -> String {
     s.trim().trim_end_matches([':', '：']).trim().to_lowercase()
 }
 
+/// For each block, whether it lies in the section of one of `headings`:
+/// after a heading whose text matches one of them (case-insensitive, any
+/// level, a trailing colon ignored), up to the next heading of the same or a
+/// higher level. Headings themselves are not in a section.
+fn under_headings(blocks: &[Block], headings: &[String]) -> Vec<bool> {
+    let headings: Vec<String> = headings.iter().map(|h| heading_key(h)).collect();
+    let mut section: Option<u8> = None;
+    blocks
+        .iter()
+        .map(|block| {
+            let BlockKind::Heading(level) = block.kind else {
+                return section.is_some();
+            };
+            let (text, _) = block.text(0, block.chars.len());
+            if headings.contains(&heading_key(&text)) {
+                section = Some(level);
+            } else if section.is_some_and(|l| level <= l) {
+                section = None;
+            }
+            false
+        })
+        .collect()
+}
+
 impl Doc {
     pub fn parse(src: String, patterns: &[CitationPattern], reference_headings: &[String]) -> Doc {
         let citations = find_citations(&src, patterns);
@@ -469,19 +493,9 @@ impl Doc {
         }
         b.flush();
         let mut blocks = b.blocks;
-        let headings: Vec<String> = reference_headings.iter().map(|h| heading_key(h)).collect();
-        let mut list_level: Option<u8> = None;
-        for block in &mut blocks {
-            if let BlockKind::Heading(level) = block.kind {
-                let (text, _) = block.text(0, block.chars.len());
-                if headings.contains(&heading_key(&text)) {
-                    list_level = Some(level);
-                } else if list_level.is_some_and(|l| level <= l) {
-                    list_level = None;
-                }
-            } else {
-                block.in_reference_list = list_level.is_some();
-            }
+        let in_list = under_headings(&blocks, reference_headings);
+        for (block, inside) in blocks.iter_mut().zip(in_list) {
+            block.in_reference_list = inside;
         }
         Doc {
             src,
@@ -489,6 +503,12 @@ impl Doc {
             citations,
             blocks,
         }
+    }
+
+    /// For each block, whether it lies in the section of one of `headings`;
+    /// sections are found as for reference lists.
+    pub fn under_headings(&self, headings: &[String]) -> Vec<bool> {
+        under_headings(&self.blocks, headings)
     }
 
     /// 1-based line of a byte offset.

@@ -258,6 +258,14 @@ impl Default for ReferenceListConfig {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PaperNotesConfig {
+    /// Headings (case-insensitive, any level) whose sections hold the note
+    /// author's own commentary: sentences there get no implied citation.
+    pub commentary_sections: Vec<String>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct CitationsToml {
@@ -277,6 +285,7 @@ struct ClaimcheckToml {
     uncited: UncitedToml,
     labels: LabelsConfig,
     reference_list: ReferenceListConfig,
+    paper_notes: PaperNotesConfig,
     severity: BTreeMap<String, String>,
 }
 
@@ -335,6 +344,7 @@ pub struct Config {
     pub uncited: Uncited,
     pub labels: LabelsConfig,
     pub reference_list: ReferenceListConfig,
+    pub paper_notes: PaperNotesConfig,
     pub severity: HashMap<Rule, SeverityOverride>,
 }
 
@@ -594,6 +604,7 @@ impl Config {
             },
             labels: cc.labels,
             reference_list: cc.reference_list,
+            paper_notes: cc.paper_notes,
             severity,
         })
     }

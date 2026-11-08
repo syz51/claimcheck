@@ -14,6 +14,7 @@
 //!   dashes between digits are kept, so `-2.1` differs from `2.1` and
 //!   `10-20` from `1020`.
 
+use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
@@ -226,6 +227,14 @@ pub fn excerpt(text: &str, max: usize) -> String {
     out
 }
 
+/// The `rf.measure/1` key of a sentence: the first 16 lowercase hex digits
+/// of the SHA-256 of its text, normalized like a finding's `sentence` (spaces
+/// collapsed and trimmed) but not truncated.
+pub fn sentence_key(text: &str) -> String {
+    let digest = Sha256::digest(excerpt(text, usize::MAX).as_bytes());
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +303,24 @@ mod tests {
         let (sk, offs) = skeleton(&n);
         assert_eq!(sk, vec!['a', 'b', 'f', 'i']);
         assert_eq!(offs, vec![0, 1, 3, 3]);
+    }
+
+    #[test]
+    fn sentence_key_hashes_collapsed_untruncated_text() {
+        // printf 'It reaches 12.3 %% accuracy .' | shasum -a 256
+        assert_eq!(
+            sentence_key("It reaches 12.3 %\n   accuracy . "),
+            "1a35ad9df61befef"
+        );
+        assert_eq!(
+            sentence_key(" It reaches 12.3 % accuracy ."),
+            "1a35ad9df61befef"
+        );
+        let long = "a".repeat(250);
+        assert_ne!(
+            sentence_key(&format!("{long} b")),
+            sentence_key(&format!("{long} c"))
+        );
     }
 
     #[test]

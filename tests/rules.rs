@@ -599,6 +599,95 @@ fn cli_exit_codes_and_jsonl() {
 }
 
 #[test]
+fn measure_counts_citing_sentences() {
+    let root = temp_project(&[
+        (
+            "research.toml",
+            "[project]\nname = \"t\"\n\n[claimcheck]\npaths = [\"docs\"]\n",
+        ),
+        (
+            "docs/a.md",
+            "Retrieval helps [1]. No citation here.\nIt reaches 12.3 % accuracy\n  [1].\n\n## References\n\n1. Ada Example. Synthetic Paper 1. 2025.\n",
+        ),
+        ("docs/b.md", "Retrieval   helps [1]. See [8] too.\n"),
+    ]);
+    let line = reference("1", Some("full"), &[]).to_string();
+    std::fs::write(root.join("references.jsonl"), format!("{line}\n")).unwrap();
+    let bin = env!("CARGO_BIN_EXE_claimcheck");
+    let run = |args: &[&str]| {
+        let out = Command::new(bin)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    let stdout = run(&["check", "--format", "jsonl", "--measure"]);
+    let rows: Vec<serde_json::Value> = stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let measures: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|r| r["schema"] == "rf.measure/1")
+        .collect();
+    assert_eq!(measures.len(), 1, "{stdout}");
+    assert_eq!(
+        rows.last(),
+        Some(measures[0]),
+        "the record follows the findings"
+    );
+    let m = measures[0];
+    assert_eq!(m["tool"], "claimcheck");
+    assert_eq!(m["unit"], "citing-sentence");
+    // Two sentences in a.md and two in b.md cite; the reference list does not count.
+    assert_eq!(m["count"], 4);
+    let keys: Vec<&str> = m["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k.as_str().unwrap())
+        .collect();
+    // The same sentence in a.md and b.md, spaced differently, has one key.
+    // Citation markers are left out, as in a finding's `sentence`.
+    let mut want: Vec<String> = [
+        "Retrieval helps .",
+        "It reaches 12.3 % accuracy .",
+        "See too.",
+    ]
+    .iter()
+    .map(|s| claimcheck::normalize::sentence_key(s))
+    .collect();
+    want.sort();
+    assert_eq!(keys, want);
+    for k in &keys {
+        assert!(
+            k.len() == 16 && k.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{k}"
+        );
+    }
+
+    let plain = run(&["check", "--format", "jsonl"]);
+    assert!(!plain.contains("rf.measure/1"), "{plain}");
+    assert_eq!(plain.lines().count(), rows.len() - 1);
+
+    let text = run(&["check", "--measure"]);
+    assert_eq!(
+        text.lines()
+            .last()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()),
+        Some(m.clone())
+    );
+}
+
+#[test]
 fn quote_that_cuts_a_number_is_not_verbatim() {
     let fx = basic();
     let f = fx.check("They write that \"our method reaches 12\" [1].\n");

@@ -30,6 +30,7 @@ It needs Rust 1.99 or later.
 ```sh
 claimcheck check [PATHS]... [--config research.toml] [--registry references.jsonl]
                  [--format text|jsonl] [--summary] [--min-severity info|warn|error]
+                 [--measure]
 claimcheck rules
 ```
 
@@ -41,6 +42,7 @@ The search follows symbolic links, but walks each directory only once, so a link
 - **`--format jsonl`** prints one `rf.finding/1` record per line (schema below).
 - **`--summary`** adds a table of counts by rule and severity, plus totals: files, citations resolved, quotations verbatim and numbers found. It goes to stdout in text mode and to stderr with `--format jsonl`.
 - **`--min-severity`** hides lower-severity findings. The exit code still counts every error.
+- **`--measure`** prints one `rf.measure/1` line after the findings, in both formats. It counts the sentences that cite a reference (see [below](#denominator-rfmeasure1)). Without it, the output is unchanged.
 - **`claimcheck rules`** lists every rule with its default severity.
 
 ### Exit codes
@@ -276,6 +278,17 @@ Entries under a reference-list heading are matched to the registry. The key come
 ```
 
 `subject` is `path:line`, with the path relative to the project root. Registry-level findings such as `source-text-changed` use the reference key. `evidence` points into source texts. `data` carries rule-specific fields such as `quote`, `similarity`, `best_match`, `sentence`, `kinds`, `near_citation` and `required`.
+
+### Denominator: `rf.measure/1`
+
+```json
+{"schema":"rf.measure/1","tool":"claimcheck","unit":"citing-sentence","count":412,"keys":["0a3f5c1e9b2d7480","…"]}
+```
+
+`lab check` stores this record, so lab can judge a check-run lesson by findings per new citing sentence ([interfaces](https://github.com/syz51/research-factory/blob/main/docs/interfaces.md), "Check-run denominators").
+
+- `count` is the number of sentences that cite at least one reference, resolved or not, over all checked files. A non-prose block, such as a table row, counts as one sentence. Reference-list entries and headings do not count.
+- `keys` are the sorted, distinct first 16 lowercase hex digits of the SHA-256 of each sentence's text. The text is normalized as a finding's `sentence`: citation markers are left out and whitespace is collapsed and trimmed. It is not truncated. The same sentence in two places has one key, so there are at most `count` keys.
 
 ## Limits
 

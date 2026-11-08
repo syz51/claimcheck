@@ -53,6 +53,9 @@ struct CheckArgs {
     /// Hide findings below this severity (the exit code still counts every error).
     #[arg(long, value_enum, default_value_t = MinSeverity::Info)]
     min_severity: MinSeverity,
+    /// After the findings, print one rf.measure/1 line counting the sentences that cite a reference.
+    #[arg(long)]
+    measure: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -145,6 +148,9 @@ fn check(args: CheckArgs) -> Result<bool, Error> {
                     write_text(w, f)?;
                 }
             }
+        }
+        if args.measure {
+            writeln!(w, "{}", stats.measure())?;
         }
         Ok(())
     };

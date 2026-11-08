@@ -171,6 +171,10 @@ pub struct Stats {
     pub numbers_checked: usize,
     pub numbers_found: usize,
     pub claims_classified: usize,
+    /// Sentences (or non-prose blocks) outside reference lists that cite a reference.
+    pub citing_sentences: usize,
+    /// [`normalize::sentence_key`] of each citing sentence.
+    pub citing_sentence_keys: BTreeSet<String>,
 }
 
 impl Stats {
@@ -183,6 +187,20 @@ impl Stats {
         self.numbers_checked += o.numbers_checked;
         self.numbers_found += o.numbers_found;
         self.claims_classified += o.claims_classified;
+        self.citing_sentences += o.citing_sentences;
+        self.citing_sentence_keys
+            .extend(o.citing_sentence_keys.iter().cloned());
+    }
+
+    /// The `rf.measure/1` record of the citing sentences, for `--measure`.
+    pub fn measure(&self) -> Value {
+        json!({
+            "schema": "rf.measure/1",
+            "tool": "claimcheck",
+            "unit": "citing-sentence",
+            "count": self.citing_sentences,
+            "keys": self.citing_sentence_keys,
+        })
     }
 }
 
@@ -395,6 +413,11 @@ impl<'a> Ctx<'a> {
                 let nums = self.numbers_in(block, u, &quoted);
                 let refs = self.refs_of(&u.cites);
                 let line = doc.line_of(unit_offset(block, u));
+                if !u.cites.is_empty() {
+                    self.stats.citing_sentences += 1;
+                    let key = normalize::sentence_key(&block.text(u.start, u.end).0);
+                    self.stats.citing_sentence_keys.insert(key);
+                }
                 if !refs.is_empty() {
                     if !nums.is_empty() {
                         let linked = block.has_link(u.start, u.end);

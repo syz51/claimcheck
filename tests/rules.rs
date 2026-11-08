@@ -1589,6 +1589,58 @@ fn scaled_numbers_match_the_full_source_numbers_they_round() {
     assert_eq!(f[0].data["match"]["value"], "1881277");
 }
 
+const TABLE_SOURCE: &str = "Table 3: builder volume, swaps and profit\nBuilder Blocks Volume Swaps Profit\nTitan 496 $970 436 241 $1 002 020\nBeaver 256 $1 881 277 251 $1 838 985\n";
+
+fn table_fixture() -> Fixture {
+    Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[("texts/1.txt", TABLE_SOURCE)],
+        "",
+    )
+}
+
+#[test]
+fn scaled_numbers_match_a_prefix_of_space_split_groups() {
+    let fx = table_fixture();
+    // The next table cell (241 swaps) continues the run `970 436`.
+    let f = fx.check("Titan builder volume was $0.97M and Beaver builder volume was $1.88M [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("0.97".into(), Severity::Info),
+            ("1.88".into(), Severity::Info)
+        ],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["match"]["kind"], "scaled");
+    assert_eq!(f[0].data["match"]["value"], "970436");
+    assert_eq!(f[0].data["match"]["line"], 3);
+    assert_eq!(f[1].data["match"]["kind"], "scaled");
+    assert_eq!(f[1].data["match"]["value"], "1881277");
+    assert_eq!(f[1].data["match"]["line"], 4);
+}
+
+#[test]
+fn the_whole_run_of_space_split_groups_wins_over_its_prefixes() {
+    let fx = table_fixture();
+    // The whole run is the match; no prefix rounds to 1.88 billion.
+    let f = fx.check("Beaver builder volume was $1.88B [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("1.88".into(), Severity::Info)],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["match"]["kind"], "scaled");
+    assert_eq!(f[0].data["match"]["value"], "1881277251");
+    // The whole run is an exact key; a prefix is not.
+    let f = fx.check("Beaver builder volume was $1,881,277,251 and $1,881,277 [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("1,881,277".into(), Severity::Warn)],
+        "{f:#?}"
+    );
+}
+
 #[test]
 fn a_source_number_with_a_scale_word_matches_by_its_scaled_value() {
     let fx = scale_fixture("");

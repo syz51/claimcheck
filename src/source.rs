@@ -28,8 +28,9 @@ pub struct IndexedText {
     numbers: Vec<NumTok>,
     number_index: HashMap<String, Vec<u32>>,
     /// Space-split thousands groups (see [`numbers::split_groups`]) read as
-    /// one number, by the index of their first group in `numbers`.
-    groups: HashMap<usize, NumTok>,
+    /// one number, by the index of their first group in `numbers`: the whole
+    /// run, then its shorter prefixes of two or more groups.
+    groups: HashMap<usize, Vec<NumTok>>,
     /// Lowercase words → positions in `norm`.
     words: HashMap<String, Vec<u32>>,
 }
@@ -61,25 +62,30 @@ impl IndexedText {
             }
         }
         // Joined values of space-split thousands groups, beside the groups'
-        // own keys, which table cells need.
+        // own keys, which table cells need. Only the whole run is an exact
+        // key; its prefixes are near-match candidates.
         let mut groups = HashMap::new();
         for (i, joined) in numbers::split_groups(&chars, &numbers) {
+            let whole = &joined[0];
             if numbers[i].negative {
                 number_index
-                    .entry(format!("-{joined}"))
+                    .entry(format!("-{whole}"))
                     .or_default()
                     .push(i as u32);
             }
             number_index
-                .entry(joined.clone())
+                .entry(whole.clone())
                 .or_default()
                 .push(i as u32);
-            let tok = NumTok {
-                value: joined,
-                separated: true,
-                ..numbers[i].clone()
-            };
-            groups.insert(i, tok);
+            let toks = joined
+                .into_iter()
+                .map(|value| NumTok {
+                    value,
+                    separated: true,
+                    ..numbers[i].clone()
+                })
+                .collect();
+            groups.insert(i, toks);
         }
         let mut words: HashMap<String, Vec<u32>> = HashMap::new();
         for (start, _, w) in normalize::words(&chars) {
@@ -250,8 +256,9 @@ impl IndexedText {
     /// approximately (see [`NumTok::near_match`]), as how it matched, the
     /// source value (in full for a [`NearMatch::Scaled`] match) and its line.
     /// A candidate that starts space-split thousands groups is also tried as
-    /// the joined number. The closest kind of match wins, then the
-    /// better-ranked candidate.
+    /// the joined number and as each joined prefix of two or more groups. The
+    /// closest kind of match wins, then the better-ranked candidate, then the
+    /// longer run.
     pub fn near_number(
         &self,
         n: &NumTok,
@@ -264,7 +271,7 @@ impl IndexedText {
             .into_iter()
             .flat_map(|i| {
                 std::iter::once(&self.numbers[i])
-                    .chain(self.groups.get(&i))
+                    .chain(self.groups.get(&i).into_iter().flatten())
                     .map(move |s| (i, s))
             })
             .filter_map(|(i, s)| Some((n.near_match(s, rounding)?, i, s)))

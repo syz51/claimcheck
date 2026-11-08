@@ -69,6 +69,7 @@ The registry is a JSON Lines file with one reference per line, as written by `pa
 | `depth` | How far the source was inspected: `metadata` < `abstract` < `method` < `full` < `artifact` < `reproduced`. Null means unknown. |
 | `texts[].path`, `texts[].sha256` | Extracted source text, relative to the project root, with an optional hash. |
 | `duplicate_of` | The key this entry duplicates. An entry with no `texts` is checked against the texts of the survivor at the end of its chain; findings then name it in `data.survivors`. |
+| `source.path` | The file the entry was built from, such as its paper note, relative to the project root. See [Paper notes](#paper-notes). |
 
 The registry is located by the first of these that is set:
 
@@ -167,7 +168,7 @@ A severity override sets the severity of every finding of the rule, whatever sev
 | `source-text-changed` | warn | A source text file's SHA-256 differs from the registry's `sha256`. The text is still used. |
 | `number-not-in-source` | warn | A number in a citing sentence occurs in none of the cited source texts. Up to `nearest` numbers near the sentence's words in the source are reported. It is info when `numbers.links_are_evidence` is set and the sentence holds a non-citation link. |
 | `depth-insufficient` | error | A sentence makes a claim of a kind that needs deeper inspection than the cited reference's `depth`. It is info when the kind is uncertain (see below). |
-| `uncited-claim` | warn | A sentence makes a quantitative or comparative claim with no citation, link or evidence label. |
+| `uncited-claim` | warn | A sentence makes a quantitative or comparative claim with no citation, link or evidence label. A sentence in a paper note cites the note's entry (see [Paper notes](#paper-notes)). |
 | `evidence-label` | warn | A label is outside the vocabulary but close to it (error), a required label is missing (warn), or a label's `min_depth` is not met (error). |
 | `reference-list-mismatch` | error | An entry in a document's own reference list disagrees with the registry on title, year or first author's surname, or names an unknown key. |
 
@@ -253,9 +254,26 @@ These do not count:
 - questions;
 - sentences with a modal or conditional word (for numbers);
 - numbers inside quotation marks;
-- headings, tables and blockquotes.
+- headings, tables and blockquotes;
+- sentences in a paper note, which cite the note's entry (see [Paper notes](#paper-notes)).
 
 A non-citation link in the same paragraph counts as evidence when `links_are_evidence` is set, and so does a valid evidence label.
+
+### Paper notes
+
+A paper note is a file that exactly one registry entry names as its `source.path`. Each prose sentence in it without a citation cites that entry, as if it ended with `[key]`. Prose means paragraphs and list items outside blockquotes. If the entry is a duplicate, the sentence cites the survivor at the end of its `duplicate_of` chain. A broken or cyclic chain gives no implied citation.
+
+A file that two or more entries name, such as a shared catalogue, is not a paper note. Paths are compared after resolving `.`, `..` and symlinks.
+
+An implied citation is checked less than a written one:
+
+- `uncited-claim` does not fire, and the sentence counts as a `citing-sentence`.
+- Numbers are checked against the entry's texts only when one of them can be read. Otherwise they are not checked, and no `source-text-missing` is reported for the sentence.
+- Quotations are not checked. Notes quote titles and their own labels for methods, which are not verbatim in the text.
+- Claim depth is not checked. Depth errors need a citation marker next to the claim keyword, and an implied citation has none.
+- An evidence label is still required where `labels.require` asks for one.
+
+A written citation in a sentence replaces the implied one for that sentence.
 
 ### Evidence labels
 
@@ -294,8 +312,8 @@ Entries under a reference-list heading are matched to the registry. The key come
 
 There is one line per unit, always in this order:
 
-1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence of a blockquote that is checked as a cited quotation also counts. A sentence with a checked inline quotation counts once, however many sentences it quotes (see [Quotations](#quotations)).
-2. **`uncited-sentence`**: the sentences without a citation in prose, meaning paragraphs and list items, outside blockquotes. These are the sentences where `uncited-claim` can fire.
+1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not, including the uncited prose sentences of a [paper note](#paper-notes). A non-prose block, such as a table row, counts as one sentence. Each sentence of a blockquote that is checked as a cited quotation also counts. A sentence with a checked inline quotation counts once, however many sentences it quotes (see [Quotations](#quotations)).
+2. **`uncited-sentence`**: the sentences without a citation in prose, meaning paragraphs and list items, outside blockquotes and outside paper notes. These are the sentences where `uncited-claim` can fire.
 
 A checked sentence is in at most one unit. These are in neither: table rows that cite nothing; sentences without a citation in a blockquote that is not checked as a cited quotation, including its list items; headings; reference-list entries; and units with no text besides citations. So a commit that adds an uncited table adds no units, just as `uncited-claim` cannot fire in it.
 

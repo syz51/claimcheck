@@ -55,6 +55,9 @@ pub struct Reference {
     pub depth: Option<Depth>,
     pub texts: Vec<TextRef>,
     pub duplicate_of: Option<String>,
+    /// `source.path`: the file the entry was built from, relative to the
+    /// project root, as written in the registry.
+    pub source_path: Option<String>,
     /// 1-based line in the registry file.
     pub line: usize,
 }
@@ -73,6 +76,12 @@ struct RawText {
 }
 
 #[derive(Deserialize)]
+struct RawSource {
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct RawRef {
     key: String,
     #[serde(default)]
@@ -87,6 +96,8 @@ struct RawRef {
     texts: Option<Vec<RawText>>,
     #[serde(default)]
     duplicate_of: Option<String>,
+    #[serde(default)]
+    source: Option<RawSource>,
 }
 
 const SCHEMA: &str = "rf.reference";
@@ -149,6 +160,7 @@ impl Registry {
                     })
                     .collect(),
                 duplicate_of: raw.duplicate_of,
+                source_path: raw.source.and_then(|s| s.path),
                 line: lineno,
             });
         }
@@ -187,7 +199,7 @@ impl Registry {
 mod tests {
     use super::*;
 
-    const LINE: &str = r#"{"schema":"rf.reference/1","key":"7","type":"paper","title":"A Study","authors":["Ada Lovelace"],"year":2025,"depth":"method","texts":[{"path":"t/7.txt","sha256":null,"origin":null}],"duplicate_of":null,"extra":1}"#;
+    const LINE: &str = r#"{"schema":"rf.reference/1","key":"7","type":"paper","title":"A Study","authors":["Ada Lovelace"],"year":2025,"depth":"method","texts":[{"path":"t/7.txt","sha256":null,"origin":null}],"duplicate_of":null,"source":{"path":"notes/7.md","line":1},"extra":1}"#;
 
     #[test]
     fn parses_and_ignores_unknown_fields() {
@@ -195,7 +207,14 @@ mod tests {
         let r = reg.get("7").unwrap();
         assert_eq!(r.depth, Some(Depth::Method));
         assert_eq!(r.texts[0].path, "t/7.txt");
+        assert_eq!(r.source_path.as_deref(), Some("notes/7.md"));
         assert_eq!(r.line, 1);
+        let bare = Registry::parse(
+            r#"{"schema":"rf.reference/1","key":"8","source":null}"#,
+            "r",
+        )
+        .unwrap();
+        assert_eq!(bare.get("8").unwrap().source_path, None);
     }
 
     #[test]

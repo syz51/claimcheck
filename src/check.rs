@@ -963,6 +963,9 @@ impl<'a> Ctx<'a> {
                 self.stats.numbers_found += 1;
                 let key = self.key(r);
                 let how_text = match how {
+                    NearMatch::Scaled(shift) => {
+                        format!("is rounded from {value} in {}s", numbers::scale_word(shift))
+                    }
                     NearMatch::Rounded => format!("is rounded from {value}"),
                     NearMatch::Percent => format!("is {value} as a percentage"),
                     NearMatch::RoundedPercent => {

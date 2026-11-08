@@ -9,6 +9,11 @@
 //! apart: a negative number in a document needs a negative number in the
 //! source, while an unsigned one ("fell by 2.1") also matches `-2.1`.
 //!
+//! A scale written after a number, glued or after one space, gives it a
+//! scaled value too: `1.2k`, `26.6 M`, `4.57 bn` and `8.65 million`. A lone
+//! letter after a space (`26.6 M`) counts only after a decimal or a currency
+//! sign, so `Figure 3 B` and `5 M HCl`-like labels keep their plain value.
+//!
 //! A document number that misses every exact key may still match a nearby
 //! source number approximately: see [`NumTok::near_match`].
 
@@ -20,8 +25,9 @@ pub struct NumTok {
     pub end: usize,
     /// Canonical value.
     pub value: String,
-    /// Value with a `k`, `M` or `B` multiplier applied, when one follows.
-    pub scaled: Option<String>,
+    /// Value with a scale such as `k`, `M`, `bn` or `million` applied, when
+    /// one follows.
+    pub scaled: Option<Scaled>,
     /// Followed by `%`, `‰` or `pp`.
     pub percent: bool,
     /// Followed by `‰`: per mille, not per cent.
@@ -44,10 +50,35 @@ pub struct NumTok {
     pub percent_dash: bool,
 }
 
+/// A number's value with its scale applied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scaled {
+    /// The power of ten the scale stands for: 3, 6, 9 or 12.
+    pub shift: usize,
+    /// Canonical value.
+    pub value: String,
+}
+
+/// A scale of 10^`shift` as a word: `thousand`, `million`, `billion` or
+/// `trillion`.
+pub fn scale_word(shift: usize) -> &'static str {
+    match shift {
+        3 => "thousand",
+        6 => "million",
+        9 => "billion",
+        _ => "trillion",
+    }
+}
+
 impl NumTok {
     /// The canonical values a matching source number may have.
     pub fn values(&self) -> impl Iterator<Item = &str> {
-        std::iter::once(self.value.as_str()).chain(self.scaled.as_deref())
+        std::iter::once(self.value.as_str()).chain(self.scaled.as_ref().map(|s| s.value.as_str()))
+    }
+
+    /// The value as written in full: the scaled value when a scale follows.
+    pub fn full_value(&self) -> &str {
+        self.scaled.as_ref().map_or(&self.value, |s| &s.value)
     }
 
     /// Integer value, when the token has no fraction or separator.
@@ -70,6 +101,12 @@ impl NumTok {
         } else {
             self.value.clone()
         }
+    }
+
+    /// [`NumTok::full_value`] with its sign, for display.
+    pub fn signed_full(&self) -> String {
+        let sign = if self.negative { "-" } else { "" };
+        format!("{sign}{}", self.full_value())
     }
 
     /// Keys under which a source number is indexed: its values, and for a
@@ -106,6 +143,9 @@ impl NumTok {
     /// differ, if it does. A negative document number needs a negative `s`
     /// (or one after a [`NumTok::percent_dash`]), as for exact matches.
     ///
+    /// - Scaled: this number has a scale of 10^k, and the full value of `s`
+    ///   (see [`NumTok::full_value`]) divided by 10^k rounds to this value as
+    ///   below (`75,088,497` as `75.1M`, `8.65 million` as `$8.7M`).
     /// - Rounded: `s` has more fractional digits than this number has as
     ///   written, and rounding `s` half-up or half-even to those digits
     ///   gives this value (`8.016` as `8.02`, `1030.90` as `1,031`).
@@ -125,6 +165,11 @@ impl NumTok {
                 && self.significant_digits() >= 2
                 && rounded(value, self.places).is_some_and(|r| r.contains(&self.value))
         };
+        if let Some(sc) = &self.scaled
+            && rounds(&unshifted(s.full_value(), sc.shift))
+        {
+            return Some(NearMatch::Scaled(sc.shift));
+        }
         if rounds(&s.value) {
             return Some(NearMatch::Rounded);
         }
@@ -149,6 +194,8 @@ impl NumTok {
 pub enum NearMatch {
     /// A fraction written as a percentage.
     Percent,
+    /// A full number written rounded with a scale of 10^shift.
+    Scaled(usize),
     Rounded,
     /// A fraction written as a rounded percentage.
     RoundedPercent,
@@ -157,6 +204,7 @@ pub enum NearMatch {
 impl NearMatch {
     pub fn as_str(self) -> &'static str {
         match self {
+            NearMatch::Scaled(_) => "scaled",
             NearMatch::Rounded => "rounded",
             NearMatch::Percent => "percent",
             NearMatch::RoundedPercent => "rounded-percent",
@@ -275,8 +323,43 @@ fn shifted(int: &str, frac: &str, shift: usize) -> String {
     canonical(&digits, &frac[shift..])
 }
 
+/// Divides a canonical unsigned decimal by 10^shift.
+fn unshifted(value: &str, shift: usize) -> String {
+    let (int, frac) = value.split_once('.').unwrap_or((value, ""));
+    let int = format!("{int:0>width$}", width = shift + 1);
+    let (int, moved) = int.split_at(int.len() - shift);
+    canonical(int, &format!("{moved}{frac}"))
+}
+
 fn is_letter(c: char) -> bool {
     c.is_alphabetic()
+}
+
+/// What the letters at `chars[k..]` say as a suffix of a number: the power of
+/// ten of a scale (`k`, `K`, `M`, `B`, `bn`, `mn`, `thousand`, `million`,
+/// `billion`, `trillion`, any case for the words), `Some(0)` for a `x`
+/// multiplier, `None` for other letters or none. The letters must end at a
+/// character that is not a letter or `_`, so `Microsoft` is no scale.
+fn suffix_at(chars: &[char], k: usize) -> Option<usize> {
+    let rest = chars.get(k..).unwrap_or_default();
+    let len = rest
+        .iter()
+        .take_while(|c| is_letter(**c) || **c == '_')
+        .count();
+    let word: String = rest[..len].iter().collect();
+    match word.as_str() {
+        "k" | "K" => Some(3),
+        "M" | "mn" => Some(6),
+        "B" | "bn" => Some(9),
+        "x" => Some(0),
+        _ => match word.to_lowercase().as_str() {
+            "thousand" => Some(3),
+            "million" => Some(6),
+            "billion" => Some(9),
+            "trillion" => Some(12),
+            _ => None,
+        },
+    }
 }
 
 /// Scans every number token in `chars`.
@@ -351,22 +434,24 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
             && !at(after_space + 2).is_some_and(is_letter);
         if matches!(at(after_space), Some('%' | '‰')) || pp {
             percent = true;
-        } else if let Some(c) = at(end).filter(|c| is_letter(*c) || *c == '_') {
-            let free = |k: usize| !at(k).is_some_and(|c| is_letter(c) || c == '_');
-            let shift = match c {
-                'k' | 'K' if free(end + 1) => Some(3),
-                'M' if free(end + 1) => Some(6),
-                'B' if free(end + 1) => Some(9),
-                'b' if at(end + 1) == Some('n') && free(end + 2) => Some(9),
-                'x' | '×' if free(end + 1) => Some(0),
-                _ => None,
-            };
-            match shift {
+        } else if at(end).is_some_and(|c| is_letter(c) || c == '_') {
+            match suffix_at(chars, end) {
                 Some(0) => {}
-                Some(s) => scaled = Some(shifted(&int, &frac, s)),
+                Some(shift) => scaled = Some(shift),
                 None => glued_right = true,
             }
+        } else if after_space > end {
+            // A lone letter after a space is often a label (`Figure 3 B`),
+            // so it is a scale only after a decimal or a currency sign.
+            let lone = !at(after_space + 1).is_some_and(is_letter);
+            let money = start > 0 && matches!(chars[start - 1], '$' | '€' | '£' | '¥');
+            scaled = suffix_at(chars, after_space)
+                .filter(|&shift| shift > 0 && (!lone || decimal || money));
         }
+        let scaled = scaled.map(|shift| Scaled {
+            shift,
+            value: shifted(&int, &frac, shift),
+        });
         out.push(NumTok {
             start,
             end,
@@ -439,13 +524,59 @@ mod tests {
         assert!(!one("1.2").dotted);
     }
 
+    fn scaled(s: &str) -> Option<String> {
+        one(s).scaled.map(|s| s.value)
+    }
+
     #[test]
     fn multipliers() {
-        assert_eq!(one("1.2k").scaled.as_deref(), Some("1200"));
-        assert_eq!(one("3M docs").scaled.as_deref(), Some("3000000"));
-        assert_eq!(one("2.5 bn").scaled, None);
-        assert_eq!(one("2.5bn").scaled.as_deref(), Some("2500000000"));
+        assert_eq!(scaled("1.2k").as_deref(), Some("1200"));
+        assert_eq!(scaled("3M docs").as_deref(), Some("3000000"));
+        assert_eq!(scaled("2.5bn").as_deref(), Some("2500000000"));
+        assert_eq!(scaled("4.5mn").as_deref(), Some("4500000"));
+        assert_eq!(one("2.5bn").scaled.unwrap().shift, 9);
         assert!(!one("3x faster").glued_right);
+        assert!(one("5kg").glued_right && one("5kg").scaled.is_none());
+    }
+
+    #[test]
+    fn scales_after_a_space_and_scale_words() {
+        assert_eq!(scaled("2.5 bn").as_deref(), Some("2500000000"));
+        assert_eq!(scaled("4.57 bn of supply").as_deref(), Some("4570000000"));
+        assert_eq!(scaled("26.6 M trades").as_deref(), Some("26600000"));
+        assert_eq!(scaled("1.38 M.").as_deref(), Some("1380000"));
+        assert_eq!(scaled("$5 M").as_deref(), Some("5000000"));
+        assert_eq!(scaled("8.65 million USD").as_deref(), Some("8650000"));
+        assert_eq!(scaled("10 thousand dollars").as_deref(), Some("10000"));
+        assert_eq!(scaled("3 Billion").as_deref(), Some("3000000000"));
+        assert_eq!(scaled("1.2 trillion").as_deref(), Some("1200000000000"));
+        assert_eq!(scaled("12 mn").as_deref(), Some("12000000"));
+        assert_eq!(scaled("8.65million").as_deref(), Some("8650000"));
+        // A space-separated scale does not make the number glued.
+        assert!(!one("26.6 M").glued_right);
+    }
+
+    #[test]
+    fn false_scales_after_a_space() {
+        // A capitalised word starting with M or B is no scale.
+        assert_eq!(scaled("26.6 Microsoft shares"), None);
+        assert_eq!(scaled("4.5 Bitcoin"), None);
+        assert_eq!(scaled("12 millions"), None);
+        // A lone letter after an integer without a currency sign is a label.
+        assert_eq!(scaled("Panel 5 B shows"), None);
+        assert_eq!(scaled("Figure 3 M"), None);
+        assert_eq!(scaled("top 5 k results"), None);
+        // Two spaces, or a line break, end the number.
+        assert_eq!(scaled("2.5  bn"), None);
+        assert_eq!(scaled("2.5\nbn"), None);
+    }
+
+    #[test]
+    fn scaled_index_keys() {
+        assert_eq!(one("8.65 million").index_keys(), ["8.65", "8650000"]);
+        assert_eq!(one("26.6 M").lookup_keys(), ["26.6", "26600000"]);
+        assert_eq!(one("8.65 million").full_value(), "8650000");
+        assert_eq!(one("75,088,497").full_value(), "75088497");
     }
 
     #[test]
@@ -539,6 +670,45 @@ mod tests {
         assert_eq!(near("8.2‰", "0.082", true), None);
         assert_eq!(near("8.2‰", "8.21", true), Some(NearMatch::Rounded));
         assert_eq!(near("0%", "0", true), None);
+    }
+
+    #[test]
+    fn scaled_numbers_match_full_values_they_round() {
+        let scaled = Some(NearMatch::Scaled(6));
+        assert_eq!(near("75.1M", "75,088,497", true), scaled);
+        assert_eq!(near("$209.98M", "209,981,692.18", true), scaled);
+        assert_eq!(near("1.38 M", "1,381,928", true), scaled);
+        assert_eq!(near("$4.3K", "4,264.33", true), Some(NearMatch::Scaled(3)));
+        assert_eq!(
+            near("$1.07B", "1,072,698,770", true),
+            Some(NearMatch::Scaled(9))
+        );
+        assert_eq!(near("75M", "75,088,497", true), scaled);
+        // A source written with a scale matches by its full value.
+        assert_eq!(near("$8.7M", "8.65 million", true), scaled);
+        // Another scale matches only as a rounding of the written value, as
+        // before: a table may state its unit elsewhere.
+        assert_eq!(
+            near("$8.7k", "8.65 million", true),
+            Some(NearMatch::Rounded)
+        );
+        // Rounding rules: no truncation, 2+ significant digits, the switch.
+        assert_eq!(near("75.0M", "75,088,497", true), None);
+        assert_eq!(near("$4K", "4,264.33", true), None);
+        assert_eq!(near("75.1M", "75,088,497", false), None);
+        assert_eq!(near("75.1M", "750,884", true), None);
+        // Signs follow the exact rule.
+        assert_eq!(near("-2.5M", "2,514,046", true), None);
+        assert_eq!(near("2.5M", "-2,514,046", true), scaled);
+    }
+
+    #[test]
+    fn unshifting_moves_the_decimal_point() {
+        assert_eq!(unshifted("75088497", 6), "75.088497");
+        assert_eq!(unshifted("4264.33", 3), "4.26433");
+        assert_eq!(unshifted("5", 6), "0.000005");
+        assert_eq!(unshifted("8650000", 6), "8.65");
+        assert_eq!(unshifted("1000", 3), "1");
     }
 
     #[test]

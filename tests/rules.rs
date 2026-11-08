@@ -1546,3 +1546,102 @@ fn a_dash_after_a_percent_is_a_range() {
         "{f:#?}"
     );
 }
+
+const SCALE_SOURCE: &str = "Results\nWe collected 75,088,497 order book snapshots, and the total arbitrage profit was 4,264.33 USD.\nThe strategy yields 8.65 million USD as net profit.\nThe authors' model makes 256 swaps with volume $1 881 277 and $1 454 profit per day.\n\nSeparate section\n\nunrelated filler text that keeps the next line far from every word of the note sentence, padding padding padding padding padding padding padding padding padding padding.\nlater 2,514,046 here\n";
+
+fn scale_fixture(toml: &str) -> Fixture {
+    Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[("texts/1.txt", SCALE_SOURCE)],
+        toml,
+    )
+}
+
+#[test]
+fn scaled_numbers_match_the_full_source_numbers_they_round() {
+    let fx = scale_fixture("");
+    let f = fx.check(
+        "We collected 75.1M order book snapshots, and the total arbitrage profit was $4.3K [1].\n",
+    );
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("75.1".into(), Severity::Info),
+            ("4.3".into(), Severity::Info)
+        ],
+        "{f:#?}"
+    );
+    assert_eq!(
+        f[0].message,
+        "75.1 is rounded from 75088497 in millions in the source text of reference 1"
+    );
+    assert_eq!(f[0].data["match"]["kind"], "scaled");
+    assert_eq!(f[0].data["match"]["value"], "75088497");
+    assert_eq!(f[0].data["match"]["line"], 2);
+    assert_eq!(f[1].data["match"]["value"], "4264.33");
+    // A scale after a space, against space-split thousands groups.
+    let f = fx.check("The authors' model makes swaps with volume of $1.88 M [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("1.88".into(), Severity::Info)],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["match"]["value"], "1881277");
+}
+
+#[test]
+fn a_source_number_with_a_scale_word_matches_by_its_scaled_value() {
+    let fx = scale_fixture("");
+    // Exact: the source's 8.65 million is indexed as 8650000.
+    let f = fx.check("The strategy yields 8,650,000 USD and 8.65 M USD as net profit [1].\n");
+    assert_eq!(number_findings(&f), [], "{f:#?}");
+    let f = fx.check("The strategy yields $8.7M as net profit [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("8.7".into(), Severity::Info)],
+        "{f:#?}"
+    );
+    assert_eq!(f[0].data["match"]["kind"], "scaled");
+    assert_eq!(f[0].data["match"]["value"], "8650000");
+}
+
+#[test]
+fn scaled_matches_follow_the_rounding_rules() {
+    let fx = scale_fixture("");
+    // Truncation, under 2 significant digits, and a number far from every
+    // context word still warn.
+    let f = fx.check(
+        "We collected 75.0M order book snapshots, the arbitrage profit was $4K and the strategy yields 2.51M [1].\n",
+    );
+    assert_eq!(
+        number_findings(&f),
+        [
+            ("75.0".into(), Severity::Warn),
+            ("4".into(), Severity::Warn),
+            ("2.51".into(), Severity::Warn)
+        ],
+        "{f:#?}"
+    );
+    let fx = scale_fixture("[claimcheck.numbers]\nmatch_rounded = false\n");
+    let f = fx.check("We collected 75.1M order book snapshots [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("75.1".into(), Severity::Warn)],
+        "{f:#?}"
+    );
+}
+
+#[test]
+fn a_lone_letter_after_an_integer_is_no_scale() {
+    let fx = scale_fixture("");
+    // `5 B` is a panel label: 5 stays a small integer, which is not checked.
+    let f = fx.check("Panel 5 B shows the order book snapshots [1].\n");
+    assert_eq!(number_findings(&f), [], "{f:#?}");
+    // With a currency sign it is a scale, and 5000000000 is not in the text.
+    let f = fx.check("The order book snapshots cost $5 B [1].\n");
+    assert_eq!(
+        number_findings(&f),
+        [("5".into(), Severity::Warn)],
+        "{f:#?}"
+    );
+}

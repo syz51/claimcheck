@@ -174,9 +174,10 @@ pub struct Stats {
     /// Sentences (or non-prose blocks) with text that cite a reference, or
     /// that are part of a blockquote checked as a cited quotation.
     pub citing: Measure,
-    /// Sentences with text and without a citation in prose (paragraphs and
-    /// list items) outside blockquotes, where `uncited-claim` can fire.
-    /// Uncited table rows and blockquote sentences are in neither unit.
+    /// Sentences with text and without a citation in paragraphs and list
+    /// items outside blockquotes: those `uncited-claim` checks. Uncited table
+    /// rows, and sentences without a citation of a blockquote not checked as
+    /// a cited quotation, are in neither unit.
     pub uncited: Measure,
 }
 
@@ -282,6 +283,14 @@ fn join_quoted(units: Vec<Unit>, quoted: &[(usize, usize)]) -> Vec<Unit> {
         }
     }
     out
+}
+
+/// Counts `u` in `m` when it has text.
+fn measure(m: &mut Measure, block: &Block, u: &Unit) {
+    if let Some(key) = normalize::sentence_key(&key_text(block, u)) {
+        m.count += 1;
+        m.keys.insert(key);
+    }
 }
 
 fn refs_list(keys: &[&str]) -> String {
@@ -482,19 +491,8 @@ impl<'a> Ctx<'a> {
                 let nums = self.numbers_in(block, u, &quoted);
                 let refs = self.refs_of(&u.cites);
                 let line = doc.line_of(unit_offset(block, u));
-                // Uncited text counts only where uncited-claim can fire.
-                let measure = if cited_quote || !u.cites.is_empty() {
-                    Some(&mut self.stats.citing)
-                } else if block.is_prose() && block.quote_group.is_none() {
-                    Some(&mut self.stats.uncited)
-                } else {
-                    None
-                };
-                if let Some(m) = measure
-                    && let Some(key) = normalize::sentence_key(&key_text(block, u))
-                {
-                    m.count += 1;
-                    m.keys.insert(key);
+                if cited_quote || !u.cites.is_empty() {
+                    measure(&mut self.stats.citing, block, u);
                 }
                 if !refs.is_empty() {
                     if !nums.is_empty() {
@@ -509,6 +507,8 @@ impl<'a> Ctx<'a> {
                     // Every key is unresolved: citation-unresolved reports it,
                     // and the sentence still cites, so it is not uncited.
                 } else if block.is_prose() && block.quote_group.is_none() {
+                    // Uncited text counts only here, where uncited-claim can fire.
+                    measure(&mut self.stats.uncited, block, u);
                     // A number inside quotation marks belongs to quoted or
                     // illustrative text, not to a claim of the sentence.
                     let own: Vec<DocNumber> = nums

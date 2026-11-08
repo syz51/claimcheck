@@ -42,7 +42,7 @@ The search follows symbolic links, but walks each directory only once, so a link
 - **`--format jsonl`** prints one `rf.finding/1` record per line (schema below).
 - **`--summary`** adds a table of counts by rule and severity, plus totals: files, citations resolved, quotations verbatim and numbers found. It goes to stdout in text mode and to stderr with `--format jsonl`.
 - **`--min-severity`** hides lower-severity findings. The exit code still counts every error.
-- **`--measure`** prints two `rf.measure/1` lines, last on stdout, in both formats: the sentences that cite a reference, then the prose sentences that do not (see [below](#denominator-rfmeasure1)). Without it, the output is unchanged.
+- **`--measure`** prints two `rf.measure/1` lines, last on stdout, in both formats: the sentences that cite a reference, then the sentences without a citation in paragraphs and list items outside blockquotes (see [below](#denominator-rfmeasure1)). Without it, the output is unchanged.
 - **`claimcheck rules`** lists every rule with its default severity.
 
 ### Exit codes
@@ -295,7 +295,7 @@ There is one line per unit, always in this order:
 1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence of a blockquote that is checked as a cited quotation also counts. A sentence with a checked inline quotation counts once, however many sentences it quotes (see [Quotations](#quotations)).
 2. **`uncited-sentence`**: the sentences without a citation in prose, meaning paragraphs and list items, outside blockquotes. These are the sentences where `uncited-claim` can fire.
 
-A checked sentence is in at most one unit. These are in neither: table rows and blockquote sentences that cite nothing, headings, reference-list entries, and units with no text besides citations. So a commit that adds an uncited table adds no units, just as `uncited-claim` cannot fire in it.
+A checked sentence is in at most one unit. These are in neither: table rows that cite nothing; sentences without a citation in a blockquote that is not checked as a cited quotation, including its list items; headings; reference-list entries; and units with no text besides citations. So a commit that adds an uncited table adds no units, just as `uncited-claim` cannot fire in it.
 
 - `count` is the number of the unit's sentences over all checked files.
 - `keys` are the sorted, distinct first 16 lowercase hex digits of the SHA-256 of each sentence's text. The text is normalized as a finding's `sentence`, with whitespace collapsed and trimmed, but in NFC and not truncated. Citation markers are left out together with the whitespace before them, so moving a citation within a sentence keeps its key: `helps [1].` and `helps.[1]` both read `helps.`. The cited references are not part of the key, so citing another reference adds no new unit. The same sentence in two places has one key, so a unit has at most `count` keys.

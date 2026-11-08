@@ -822,6 +822,17 @@ fn measure_counts_only_prose_outside_blockquotes_as_uncited() {
     );
     // The paragraph next to them still counts.
     assert_eq!(measure("> An aside.\n\nNo citation here.\n"), (0, 1));
+    // A blockquote not checked as a quotation, because it is too short or
+    // its key does not resolve: its cited sentences cite, the others are in
+    // no unit. So is a list item inside a blockquote.
+    assert_eq!(measure("> Short. Yes [1].\n"), (1, 0));
+    assert_eq!(measure("> It rose. Accuracy rose 12 % [9].\n"), (1, 0));
+    assert_eq!(measure("> - A list item.\n"), (0, 0));
+    // Every sentence uncited-claim reports is an uncited-sentence unit.
+    let md = "Accuracy rose to 87.5% in the pilot. Our system outperforms every baseline.\n\n- Recall fell to 40% overall.\n\n> Recall fell to 30% overall.\n";
+    let (f, st) = check_document(&fx.project, "doc.md", md.to_string(), 0);
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn); 3]);
+    assert_eq!((st.citing.count, st.uncited.count), (0, 3));
 }
 
 #[test]

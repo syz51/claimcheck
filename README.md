@@ -239,9 +239,11 @@ These are not checked:
 - numbers glued to letters (`A12`, `F1`, `gpt-4`) or dotted versions (`1.2.3`);
 - section, table, figure and equation locators;
 - reference numbers, `#N`, URLs, DOIs, arXiv ids, dates and times;
+- shortened hex addresses (`0x0d4a…1852`, `0x0d4a...1852`);
+- the number in an index name after Nikkei, TOPIX, S&P, Russell, FTSE, STOXX, KOSPI, CSI, Nasdaq, DAX or CAC (`Nikkei 225`, `S&P 500`), any case, with at most one space before it;
 - numbers inside code, links or quotations that are checked as quotations.
 
-A date, locator or identifier hides a number only when it covers the whole number. Dates need a plausible year, month and day, so `9999.99` and `55.1-58.4` are checked. Dates and locators never hide a percentage, a scaled number or a number with thousands separators, so "level 95%" and "rows 2,378" are checked.
+A date, locator or identifier hides a number only when it covers the whole number. Dates need a plausible year, month and day, so `9999.99` and `55.1-58.4` are checked. Dates, locators and index names never hide a percentage, a scaled number or a number with thousands separators, so "level 95%" and "rows 2,378" are checked. Index names and dates also never hide a decimal. So in "the Nikkei 225 fell 12.4%" the 12.4% is checked.
 
 A sentence whose cited references have no text gets one `source-text-missing` finding listing its numbers.
 

@@ -1808,3 +1808,32 @@ fn a_lone_letter_after_an_integer_is_no_scale() {
         "{f:#?}"
     );
 }
+
+#[test]
+fn index_names_and_short_addresses_are_not_numbers() {
+    let fx = basic();
+    for md in [
+        "The Nikkei 225 led the move [1].\n",
+        "TOPIX 500 stocks and the S&P 500 diverged [1].\n",
+        "The pool 0x0d4a…1852 held the flow [1].\n",
+        "The pool 0x0d4a...1852 held the flow [1].\n",
+    ] {
+        assert!(unmatched_numbers(&fx, md).is_empty(), "{md}");
+        let uncited = md.replace(" [1]", "");
+        assert!(fx.check(&uncited).is_empty(), "{uncited}");
+    }
+    // A quantity next to an index name is still checked.
+    assert_eq!(
+        unmatched_numbers(&fx, "In August the Nikkei 225 fell 12.4% [1].\n"),
+        ["12.4%"]
+    );
+    assert_eq!(
+        rules(&fx.check("In August the Nikkei 225 fell 12.4%.\n")),
+        [(Rule::UncitedClaim, Severity::Warn)]
+    );
+    // An index name hides only a plain integer, never a percentage.
+    assert_eq!(
+        unmatched_numbers(&fx, "It closed the Nikkei 12% lower [1].\n"),
+        ["12%"]
+    );
+}

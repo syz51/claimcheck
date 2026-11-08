@@ -1696,6 +1696,9 @@ enum MaskKind {
     /// Section, table and other locators: hide integers and dotted
     /// numbers such as `3.2`, never percentages or thousands.
     Locator,
+    /// Index names such as `Nikkei 225` or `S&P 500`: hide plain integers
+    /// only, so `the Nikkei 12% lower` keeps its 12%.
+    Name,
 }
 
 impl MaskKind {
@@ -1703,14 +1706,14 @@ impl MaskKind {
         let quantity = tok.percent || tok.separated || tok.scaled.is_some();
         match self {
             MaskKind::Identifier => true,
-            MaskKind::Date => !quantity && !tok.decimal,
+            MaskKind::Date | MaskKind::Name => !quantity && !tok.decimal,
             MaskKind::Locator => !quantity,
         }
     }
 }
 
-/// Spans whose digits are identifiers, dates or locators, not quantities. A
-/// mask hides a number only when it covers the whole number.
+/// Spans whose digits are identifiers, dates, locators or index names, not
+/// quantities. A mask hides a number only when it covers the whole number.
 static MASKS: LazyLock<Vec<(MaskKind, Regex)>> = LazyLock::new(|| {
     const MONTH: &str = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?";
     const DAY: &str = r"(?:0?[1-9]|[12]\d|3[01])";
@@ -1718,13 +1721,17 @@ static MASKS: LazyLock<Vec<(MaskKind, Regex)>> = LazyLock::new(|| {
     const YEAR: &str = r"(?:19|20)\d{2}";
     const LOC: &str = r"[a-z]?\.?[1-9]\d*(?:\.\d+)*[a-z]?";
     let section_words = r"sections?|secs?\.|tables?|tabs?\.|figures?|figs?\.|appendix|appendices|app\.|equations?|eqs?\.|algorithms?|alg\.|chapters?|ch\.|lemmas?|theorems?|definitions?|propositions?|corollar(?:y|ies)|steps?|lines?|pages?|pp?\.|nos?\.|refs?\.|references?|items?|versions?|v\.|examples?|rows?|columns?|cols?\.|questions?|q|rq|footnotes?|notes?|exhibits?|parts?|annex|rules?|articles?|art\.|paragraphs?|para\.|claims?|hypothes[ie]s|stages?|phases?|rounds?|runs?|iterations?|epochs?|layers?|seed|sources?|ids?|identifiers?";
-    use MaskKind::{Date, Identifier, Locator};
+    use MaskKind::{Date, Identifier, Locator, Name};
     [
         (Identifier, r"(?i)\b(?:https?://|www\.)\S+".to_string()),
         (Identifier, r"\b10\.\d{4,9}/\S+".to_string()),
         (Identifier, r"\b\d{4}\.\d{4,5}(?:v\d+)?\b".to_string()),
         (Identifier, r"[#№]\s*\d+".to_string()),
         (Identifier, r"\b\d{1,2}-[A-Z]\b".to_string()),
+        // Shortened hex addresses: 0x0d4a…1852, 0x0d4a...1852
+        (Identifier, r"\b0x[0-9a-fA-F]+(?:…|\.\.\.)[0-9a-fA-F]+".to_string()),
+        // Index names: Nikkei 225, TOPIX 500, S&P 500
+        (Name, r"(?i)\b(?:nikkei|topix|s&p|russell|ftse|stoxx|kospi|csi|nasdaq|dax|cac)\s?\d+".to_string()),
         // 2026-10-10, 2026/10, 2026.10.10
         (Date, format!(r"\b{YEAR}(?:[-/]{MON}(?:[-/]{DAY})?|\.{MON}\.{DAY})\b")),
         // 10/10/2026, 10-10-26, 10.10.2026

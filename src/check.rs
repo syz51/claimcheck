@@ -174,7 +174,9 @@ pub struct Stats {
     /// Sentences (or non-prose blocks) with text that cite a reference, or
     /// that are part of a blockquote checked as a cited quotation.
     pub citing: Measure,
-    /// The other checked sentences with text: those without a citation.
+    /// Sentences with text and without a citation in prose (paragraphs and
+    /// list items) outside blockquotes, where `uncited-claim` can fire.
+    /// Uncited table rows and blockquote sentences are in neither unit.
     pub uncited: Measure,
 }
 
@@ -220,7 +222,7 @@ impl Stats {
     }
 
     /// The `rf.measure/1` records for `--measure`, one per unit, in output
-    /// order. Each checked sentence with text is in exactly one of them.
+    /// order. A checked sentence is in at most one of them.
     pub fn measures(&self) -> [Value; 2] {
         [
             self.citing.record("citing-sentence"),
@@ -480,12 +482,17 @@ impl<'a> Ctx<'a> {
                 let nums = self.numbers_in(block, u, &quoted);
                 let refs = self.refs_of(&u.cites);
                 let line = doc.line_of(unit_offset(block, u));
-                if let Some(key) = normalize::sentence_key(&key_text(block, u)) {
-                    let m = if cited_quote || !u.cites.is_empty() {
-                        &mut self.stats.citing
-                    } else {
-                        &mut self.stats.uncited
-                    };
+                // Uncited text counts only where uncited-claim can fire.
+                let measure = if cited_quote || !u.cites.is_empty() {
+                    Some(&mut self.stats.citing)
+                } else if block.is_prose() && block.quote_group.is_none() {
+                    Some(&mut self.stats.uncited)
+                } else {
+                    None
+                };
+                if let Some(m) = measure
+                    && let Some(key) = normalize::sentence_key(&key_text(block, u))
+                {
                     m.count += 1;
                     m.keys.insert(key);
                 }

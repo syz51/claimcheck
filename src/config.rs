@@ -61,6 +61,9 @@ pub struct NumbersConfig {
     /// to its own evidence, such as the project's count of a dataset beside
     /// the dataset's citation. Off by default.
     pub links_are_evidence: bool,
+    /// A number that misses the exact keys may match a nearby source number
+    /// it rounds (see [`crate::numbers::NumTok::near_match`]). On by default.
+    pub match_rounded: bool,
 }
 
 impl Default for NumbersConfig {
@@ -73,6 +76,7 @@ impl Default for NumbersConfig {
             context_window: 150,
             nearest: 3,
             links_are_evidence: false,
+            match_rounded: true,
         }
     }
 }

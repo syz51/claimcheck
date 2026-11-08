@@ -461,6 +461,56 @@ fn evidence_labels() {
 }
 
 #[test]
+fn evidence_label_findings_carry_a_paragraph_key() {
+    let toml = "[claimcheck.labels]\nvocabulary = [\"Verified\", \"Author-reported\", \"Hypothesis\"]\nrequire = \"claims\"\n[claimcheck.labels.min_depth]\nVerified = \"full\"\n";
+    let fx = Fixture::new(
+        &[
+            reference("1", Some("full"), &[]),
+            reference("2", Some("abstract"), &[]),
+        ],
+        &[],
+        toml,
+    );
+    // Lab keys an introduced finding by its message and data.
+    let keys = |f: &[Finding]| -> Vec<(String, String)> {
+        let mut k: Vec<_> = f
+            .iter()
+            .map(|f| (f.message.clone(), serde_json::to_string(&f.data).unwrap()))
+            .collect();
+        k.sort();
+        k
+    };
+    // The rf.measure/1 key of the paragraph's first unit, e.g.
+    // printf 'Retrieval helps.' | shasum -a 256
+    let f = fx.check("Retrieval helps [1]. It is cheap.\n\nReranking helps [1].\n");
+    assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Warn); 2]);
+    assert_eq!(f[0].data["paragraph_key"], json!("e94b58cad0101603"));
+    let two = keys(&f);
+    assert_ne!(two[0], two[1], "two unlabeled paragraphs, two keys");
+    // Moved below another paragraph, each keeps its key; so does a paragraph
+    // whose later sentences change.
+    let moved = fx.check(
+        "Reranking helps [1].\n\nPlain prose without claims.\n\nRetrieval helps [1]. It is fast.\n",
+    );
+    assert_eq!(moved[0].subject, "doc.md:1");
+    assert_eq!(keys(&moved), two);
+
+    // The unknown-label and too-shallow findings of two paragraphs differ too.
+    let f = fx.check("Verfied: retrieval helps [1].\n\nVerfied: reranking helps [1].\n");
+    assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Error); 2]);
+    let k = keys(&f);
+    assert_ne!(k[0], k[1]);
+    let f = fx.check("Verified: retrieval helps [2].\n\nVerified: reranking helps [2].\n");
+    assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Error); 2]);
+    let k = keys(&f);
+    assert_ne!(k[0], k[1]);
+    // A paragraph with no text besides citations has no key.
+    let f = fx.check("[1]\n");
+    assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Warn)]);
+    assert_eq!(f[0].data["paragraph_key"], json!(null));
+}
+
+#[test]
 fn reference_list_entries() {
     let mut r = reference("7", Some("full"), &[]);
     r["title"] = json!("Retrieval for Annual Reports");

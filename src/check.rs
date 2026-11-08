@@ -521,7 +521,7 @@ impl<'a> Ctx<'a> {
                 block_claims |= !nums.is_empty();
             }
             if block.is_prose() && !self.p.cfg.labels.vocabulary.is_empty() {
-                self.check_label(block, block_claims);
+                self.check_label(block, &units, block_claims);
             }
         }
     }
@@ -1219,9 +1219,16 @@ impl<'a> Ctx<'a> {
         true
     }
 
-    fn check_label(&mut self, block: &Block, claims: bool) {
+    fn check_label(&mut self, block: &Block, units: &[Unit], claims: bool) {
         let labels = &self.p.cfg.labels;
         let line = self.doc.line_of(block.first_offset());
+        // Tells apart the findings of paragraphs that would otherwise share
+        // a message and data, wherever the paragraph moves: the
+        // `rf.measure/1` key of its first unit with text.
+        let paragraph_key = units
+            .iter()
+            .find_map(|u| normalize::sentence_key(&key_text(block, u)))
+            .map(|k| hex(&k));
         let label = doc::leading_label(block);
         let valid = label
             .as_ref()
@@ -1236,6 +1243,7 @@ impl<'a> Ctx<'a> {
             let mut data = Map::new();
             data.insert("label".into(), json!(l));
             data.insert("suggestion".into(), json!(near));
+            data.insert("paragraph_key".into(), json!(paragraph_key));
             self.emit(
                 Rule::EvidenceLabel,
                 Severity::Error,
@@ -1255,6 +1263,7 @@ impl<'a> Ctx<'a> {
         if needs && valid.is_none() {
             let mut data = Map::new();
             data.insert("vocabulary".into(), json!(labels.vocabulary));
+            data.insert("paragraph_key".into(), json!(paragraph_key));
             self.emit(
                 Rule::EvidenceLabel,
                 Severity::Warn,
@@ -1283,6 +1292,7 @@ impl<'a> Ctx<'a> {
             data.insert("reference".into(), json!(key));
             data.insert("depth".into(), json!(depth));
             data.insert("required".into(), json!(min));
+            data.insert("paragraph_key".into(), json!(paragraph_key));
             let (sev, msg) = match depth {
                 Some(d) => (
                     Severity::Error,

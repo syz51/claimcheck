@@ -251,7 +251,7 @@ These do not count:
 - questions;
 - sentences with a modal or conditional word (for numbers);
 - numbers inside quotation marks;
-- sentences that are part of a quotation checked against its citation. A cited inline quotation of several sentences is checked as a whole, so its sentences before the citation marker count as cited, and so does the text before the quotation in the same sentence;
+- text of a quotation checked against its citation. A cited inline quotation of several sentences is checked as a whole, so its sentences before the citation marker are not uncited claims. Text before or after the quotation in the same sentence is still checked: in `Revenue rose 40 % and the CEO said "…. …" [1]`, the 40 % is an uncited claim;
 - headings, tables and blockquotes.
 
 A non-citation link in the same paragraph counts as evidence when `links_are_evidence` is set, and so does a valid evidence label.
@@ -287,7 +287,7 @@ Entries under a reference-list heading are matched to the registry. The key come
 {"schema":"rf.measure/1","tool":"claimcheck","unit":"uncited-sentence","count":958,"keys":["03b7e2a9c4d16f58","…"]}
 ```
 
-`lab check` stores these records, so lab can judge a check-run lesson by findings per new sentence ([interfaces](https://github.com/syz51/research-factory/blob/main/docs/interfaces.md), "Check-run denominators"). `uncited-claim` fires only on sentences that do not cite, so `citing-sentence` never grows when it fires; `uncited-sentence` does. Lab 0.9.0 and earlier read a check that prints several units as measuring no interval, so they need a lab that picks the unit per rule.
+`lab check` stores these records, so lab can judge a check-run lesson by findings per new sentence ([interfaces](https://github.com/syz51/research-factory/blob/main/docs/interfaces.md), "Check-run denominators"). `uncited-claim` fires on sentences that do not cite, so `citing-sentence` does not grow when it fires; `uncited-sentence` does. The one exception is a claim outside a cited inline quotation in the same sentence, which counts in `citing-sentence`. Lab 0.9.0 and earlier read a check that prints several units as measuring no interval, so they need a lab that picks the unit per rule.
 
 There is one line per unit, always in this order:
 

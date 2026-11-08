@@ -478,8 +478,6 @@ impl<'a> Ctx<'a> {
                 } else if !u.cites.is_empty() {
                     // Every key is unresolved: citation-unresolved reports it,
                     // and the sentence still cites, so it is not uncited.
-                } else if in_cited_quote {
-                    // check_quote checked it against the quotation's citation.
                 } else if block.is_prose() && block.quote_group.is_none() {
                     // A number inside quotation marks belongs to quoted or
                     // illustrative text, not to a claim of the sentence.
@@ -488,7 +486,9 @@ impl<'a> Ctx<'a> {
                         .filter(|n| !spans.iter().any(|&(s, e)| s <= n.at && n.at < e))
                         .cloned()
                         .collect();
-                    block_claims |= self.check_uncited(block, u, line, &own);
+                    // A cited inline quotation was checked against its
+                    // citation, but the rest of the sentence was not.
+                    block_claims |= self.check_uncited(block, u, line, &own, &quoted);
                 }
                 block_claims |= !nums.is_empty();
             }
@@ -1138,22 +1138,36 @@ impl<'a> Ctx<'a> {
     }
 
     /// Reports an uncited claim; returns whether the unit makes a claim.
-    fn check_uncited(&mut self, block: &Block, u: &Unit, line: usize, nums: &[DocNumber]) -> bool {
-        let (text, _) = block.claim_text(u.start, u.end);
+    /// Reports `u` when it makes a claim outside the `cited` quotation
+    /// spans, whose text was checked against their citation instead.
+    fn check_uncited(
+        &mut self,
+        block: &Block,
+        u: &Unit,
+        line: usize,
+        nums: &[DocNumber],
+        cited: &[(usize, usize)],
+    ) -> bool {
+        let (text, map) = block.claim_text(u.start, u.end);
+        let own: String = text
+            .char_indices()
+            .filter(|&(b, _)| !cited.iter().any(|&(s, e)| s <= map[b] && map[b] < e))
+            .map(|(_, c)| c)
+            .collect();
         let comparative = self
             .p
             .cfg
             .uncited
             .comparative
             .as_ref()
-            .and_then(|re| asserted_matches(re, &text).into_iter().next());
+            .and_then(|re| asserted_matches(re, &own).into_iter().next());
         if nums.is_empty() && comparative.is_none() {
             return false;
         }
         // Questions and hypothetical or normative sentences ("must fit 4,096
         // tokens") assert nothing that a source could support.
-        let question = text.trim_end().ends_with(['?', '\u{FF1F}']);
-        if question || (comparative.is_none() && config::has_modal(&text)) {
+        let question = own.trim_end().ends_with(['?', '\u{FF1F}']);
+        if question || (comparative.is_none() && config::has_modal(&own)) {
             return false;
         }
         if (self.p.cfg.uncited.links_are_evidence && block.links > 0) || self.has_valid_label(block)

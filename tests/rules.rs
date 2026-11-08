@@ -637,6 +637,30 @@ fn cited_inline_quotation_sentences_are_not_uncited() {
 }
 
 #[test]
+fn claim_before_a_cited_inline_quotation_is_still_uncited() {
+    let fx = inline_quote_fixture();
+    // The quotation is checked against [1], but "40 %" before it, in the
+    // same sentence, is not part of it and has no citation of its own.
+    let f = fx.check(
+        "Revenue rose 40 % and the authors write \"Our retriever outperforms BM25 on every split. Evidence is scattered across many sections.\" [1]\n",
+    );
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)], "{f:#?}");
+    assert_eq!(f[0].subject, "doc.md:1");
+    assert_eq!(f[0].data["numbers"], json!(["40%"]));
+    assert!(
+        f[0].message.contains("quantitative claim (40%)"),
+        "{}",
+        f[0].message
+    );
+    // So is a comparative phrase there, but not one inside the quotation.
+    let f = fx.check(
+        "Our tool beats theirs, and the authors write \"Our retriever outperforms BM25 on every split. Evidence is scattered across many sections.\" [1]\n",
+    );
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)], "{f:#?}");
+    assert!(f[0].message.contains("(\"beats\")"), "{}", f[0].message);
+}
+
+#[test]
 fn measure_counts_cited_inline_quotation_sentences_as_citing() {
     let fx = inline_quote_fixture();
     let measure = |md: &str| {

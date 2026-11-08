@@ -49,7 +49,7 @@ fn is_markdown(p: &Path) -> bool {
 
 /// A path with symlinks, `.` and `..` resolved. A path that does not exist is
 /// resolved through its longest existing ancestor.
-fn resolve(p: &Path) -> PathBuf {
+pub(crate) fn resolve(p: &Path) -> PathBuf {
     if let Ok(c) = p.canonicalize() {
         return c;
     }

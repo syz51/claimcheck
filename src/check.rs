@@ -22,6 +22,9 @@ pub struct Project {
     pub texts: Vec<TextEntry>,
     /// Registry index → indexes into `texts`.
     ref_texts: Vec<Vec<usize>>,
+    /// Resolved `source.path` → the survivor of the only entry that names
+    /// the file; `None` when several entries name it or the chain is broken.
+    notes: HashMap<std::path::PathBuf, Option<usize>>,
 }
 
 impl Project {
@@ -46,12 +49,42 @@ impl Project {
             }
             ref_texts.push(ids);
         }
+        let mut named: HashMap<std::path::PathBuf, Vec<usize>> = HashMap::new();
+        for (i, r) in registry.refs.iter().enumerate() {
+            if let Some(path) = &r.source_path {
+                named
+                    .entry(crate::resolve(&cfg.root.join(path)))
+                    .or_default()
+                    .push(i);
+            }
+        }
+        let notes = named
+            .into_iter()
+            .map(|(path, entries)| {
+                let survivor = match entries.as_slice() {
+                    [one] => registry
+                        .survivor(&registry.refs[*one].key)
+                        .and_then(|s| registry.index(s)),
+                    _ => None,
+                };
+                (path, survivor)
+            })
+            .collect();
         Project {
             cfg,
             registry,
             texts,
             ref_texts,
+            notes,
         }
+    }
+
+    /// The reference that `file` (as shown in findings, relative to the root)
+    /// cites implicitly: the survivor of the only registry entry whose
+    /// `source.path` names it.
+    pub fn note_reference(&self, file: &str) -> Option<usize> {
+        let path = crate::resolve(&self.cfg.root.join(file));
+        self.notes.get(&path).copied().flatten()
     }
 
     /// The reference whose texts stand for `r`: `r` itself, or, when `r`
@@ -241,6 +274,9 @@ struct Ctx<'a> {
     stats: Stats,
     /// Citation index → resolved registry indexes.
     resolved: Vec<Vec<usize>>,
+    /// The reference every uncited prose sentence cites implicitly: see
+    /// [`Project::note_reference`].
+    implied: Option<usize>,
 }
 
 fn quote_excerpt(s: &str, max: usize) -> String {
@@ -507,8 +543,6 @@ impl<'a> Ctx<'a> {
                     // Every key is unresolved: citation-unresolved reports it,
                     // and the sentence still cites, so it is not uncited.
                 } else if block.is_prose() && block.quote_group.is_none() {
-                    // Uncited text counts only here, where uncited-claim can fire.
-                    measure(&mut self.stats.uncited, block, u);
                     // A number inside quotation marks belongs to quoted or
                     // illustrative text, not to a claim of the sentence.
                     let own: Vec<DocNumber> = nums
@@ -516,7 +550,23 @@ impl<'a> Ctx<'a> {
                         .filter(|n| !spans.iter().any(|&(s, e)| s <= n.at && n.at < e))
                         .cloned()
                         .collect();
-                    block_claims |= self.check_uncited(block, u, line, &own);
+                    if let Some(r) = self.implied {
+                        // The note's own entry cites the sentence. Its numbers
+                        // are checked only against a readable text, and its
+                        // quotations and claim depth not at all: see README,
+                        // "Paper notes".
+                        measure(&mut self.stats.citing, block, u);
+                        if !nums.is_empty() && !self.p.texts_of(r).is_empty() {
+                            let linked = block.has_link(u.start, u.end);
+                            let sentence = block.text(u.start, u.end).0;
+                            self.check_numbers(line, &nums, &[r], &sentence, linked);
+                        }
+                        block_claims |= self.check_uncited(block, u, line, &own, false);
+                    } else {
+                        // Uncited text counts only here, where uncited-claim can fire.
+                        measure(&mut self.stats.uncited, block, u);
+                        block_claims |= self.check_uncited(block, u, line, &own, true);
+                    }
                 }
                 block_claims |= !nums.is_empty();
             }
@@ -1165,8 +1215,16 @@ impl<'a> Ctx<'a> {
         doc::leading_label(block).is_some_and(|(l, _)| self.p.cfg.labels.vocabulary.contains(&l))
     }
 
-    /// Reports an uncited claim; returns whether the unit makes a claim.
-    fn check_uncited(&mut self, block: &Block, u: &Unit, line: usize, nums: &[DocNumber]) -> bool {
+    /// Reports an uncited claim when `report`; returns whether the unit makes
+    /// a claim.
+    fn check_uncited(
+        &mut self,
+        block: &Block,
+        u: &Unit,
+        line: usize,
+        nums: &[DocNumber],
+        report: bool,
+    ) -> bool {
         let (text, _) = block.claim_text(u.start, u.end);
         let comparative = self
             .p
@@ -1184,7 +1242,9 @@ impl<'a> Ctx<'a> {
         if question || (comparative.is_none() && config::has_modal(&text)) {
             return false;
         }
-        if (self.p.cfg.uncited.links_are_evidence && block.links > 0) || self.has_valid_label(block)
+        if !report
+            || (self.p.cfg.uncited.links_are_evidence && block.links > 0)
+            || self.has_valid_label(block)
         {
             return true;
         }
@@ -1641,6 +1701,7 @@ pub fn check_document(p: &Project, file: &str, src: String, order: usize) -> (Ve
             ..Stats::default()
         },
         resolved: Vec::new(),
+        implied: p.note_reference(file),
     };
     ctx.run();
     let Ctx { mut out, stats, .. } = ctx;

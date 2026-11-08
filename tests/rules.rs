@@ -1312,3 +1312,115 @@ fn a_link_in_the_same_sentence_lowers_a_missing_number_to_info_when_enabled() {
             .is_empty()
     );
 }
+
+/// A registry entry built from the note at `source`.
+fn note_entry(key: &str, depth: Option<&str>, texts: &[&str], source: &str) -> serde_json::Value {
+    let mut r = reference(key, depth, texts);
+    r["source"] = json!({"path": source, "line": 1});
+    r
+}
+
+fn note_fixture(refs: &[serde_json::Value]) -> Fixture {
+    let toml = "[claimcheck.claims.kinds]\nresult = [\"outperforms\"]\n[claimcheck.claims.required_depth]\nresult = \"method\"\n";
+    Fixture::new(refs, &[("texts/p.txt", SOURCE)], toml)
+}
+
+impl Fixture {
+    fn check_as(&self, file: &str, md: &str) -> (Vec<Finding>, (usize, usize)) {
+        let (f, st) = check_document(&self.project, file, md.to_string(), 0);
+        (f, (st.citing.count, st.uncited.count))
+    }
+}
+
+#[test]
+fn a_note_cites_the_only_entry_that_names_it() {
+    let fx = note_fixture(&[
+        note_entry("7", Some("abstract"), &["texts/p.txt"], "papers/p.md"),
+        note_entry("8", Some("full"), &[], "./papers/q.md"),
+    ]);
+    // Uncited prose in the note cites its entry: no uncited-claim, and the
+    // sentence is a citing sentence. Depth is not checked: an explicit [7]
+    // here would be a depth-insufficient error.
+    let (f, m) = fx.check_as("papers/p.md", "Our system outperforms every baseline.\n");
+    assert!(f.is_empty(), "{f:#?}");
+    assert_eq!(m, (1, 0));
+    // Numbers are checked against the entry's text.
+    let (f, _) = fx.check_as("papers/p.md", "Accuracy is 12.3% on 1234 questions.\n");
+    assert!(f.is_empty(), "{f:#?}");
+    let (f, _) = fx.check_as("papers/p.md", "Accuracy is 55.5% overall.\n");
+    assert_eq!(rules(&f), [(Rule::NumberNotInSource, Severity::Warn)]);
+    assert_eq!(f[0].data["references"], json!(["7"]));
+    // Quotations are not checked against the implied entry.
+    let (f, m) = fx.check_as(
+        "papers/p.md",
+        "They call it “financial evidence retrieval for quarterly reports”.\n",
+    );
+    assert!(f.is_empty(), "{f:#?}");
+    assert_eq!(m, (1, 0));
+    // An entry without a text: numbers are not checked, and no
+    // source-text-missing. `./` in source.path still names the note.
+    let (f, m) = fx.check_as("papers/q.md", "Accuracy is 55.5% overall.\n");
+    assert!(f.is_empty(), "{f:#?}");
+    assert_eq!(m, (1, 0));
+    // An explicit citation still decides what a sentence cites.
+    let (f, _) = fx.check_as("papers/q.md", "It outperforms BM25 [7].\n");
+    assert_eq!(rules(&f), [(Rule::DepthInsufficient, Severity::Error)]);
+    // Other files are unaffected.
+    let (f, m) = fx.check_as("notes.md", "Accuracy is 55.5% overall.\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+    assert_eq!(m, (0, 1));
+}
+
+#[test]
+fn a_duplicate_entry_note_cites_its_survivor() {
+    let mut broken = note_entry("6", None, &[], "papers/b.md");
+    broken["duplicate_of"] = json!("missing");
+    let mut dup = note_entry("5", None, &[], "papers/d.md");
+    dup["duplicate_of"] = json!("7");
+    let fx = note_fixture(&[
+        note_entry("7", Some("full"), &["texts/p.txt"], "papers/p.md"),
+        dup,
+        broken,
+    ]);
+    let (f, m) = fx.check_as("papers/d.md", "Accuracy is 55.5% overall.\n");
+    assert_eq!(rules(&f), [(Rule::NumberNotInSource, Severity::Warn)]);
+    assert_eq!(f[0].data["references"], json!(["7"]));
+    assert_eq!(m, (1, 0));
+    // A chain that ends at no surviving entry implies no citation.
+    let (f, m) = fx.check_as("papers/b.md", "Accuracy is 55.5% overall.\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+    assert_eq!(m, (0, 1));
+}
+
+#[test]
+fn a_file_that_several_entries_name_cites_none() {
+    let fx = note_fixture(&[
+        note_entry("7", Some("full"), &["texts/p.txt"], "refs.md"),
+        note_entry("9", Some("full"), &[], "refs.md"),
+    ]);
+    let (f, m) = fx.check_as("refs.md", "Our system outperforms every baseline.\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+    assert_eq!(m, (0, 1));
+}
+
+#[test]
+fn an_implied_citation_still_needs_an_evidence_label() {
+    let toml = "[claimcheck.labels]\nvocabulary = [\"Verified\"]\nrequire = \"claims\"\n";
+    let fx = Fixture::new(
+        &[note_entry(
+            "7",
+            Some("full"),
+            &["texts/p.txt"],
+            "papers/p.md",
+        )],
+        &[("texts/p.txt", SOURCE)],
+        toml,
+    );
+    let (f, _) = fx.check_as("papers/p.md", "Our system outperforms every baseline.\n");
+    assert_eq!(rules(&f), [(Rule::EvidenceLabel, Severity::Warn)]);
+    let (f, _) = fx.check_as(
+        "papers/p.md",
+        "Verified: Our system outperforms every baseline.\n",
+    );
+    assert!(f.is_empty(), "{f:#?}");
+}

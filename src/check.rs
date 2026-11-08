@@ -173,9 +173,36 @@ pub struct Stats {
     pub claims_classified: usize,
     /// Sentences (or non-prose blocks) with text that cite a reference, or
     /// that are part of a blockquote checked as a cited quotation.
-    pub citing_sentences: usize,
-    /// [`normalize::sentence_key`] of each citing sentence.
-    pub citing_sentence_keys: BTreeSet<[u8; 8]>,
+    pub citing: Measure,
+    /// The other checked sentences with text: those without a citation.
+    pub uncited: Measure,
+}
+
+/// One `rf.measure/1` unit: how many sentences, and the distinct
+/// [`normalize::sentence_key`] of each.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Measure {
+    pub count: usize,
+    pub keys: BTreeSet<[u8; 8]>,
+}
+
+impl Measure {
+    fn add(&mut self, o: Measure) {
+        self.count += o.count;
+        self.keys.extend(o.keys);
+    }
+
+    /// Keys sort as bytes, which is their order as hex strings.
+    fn record(&self, unit: &str) -> Value {
+        let keys: Vec<String> = self.keys.iter().map(|k| hex(k)).collect();
+        json!({
+            "schema": "rf.measure/1",
+            "tool": "claimcheck",
+            "unit": unit,
+            "count": self.count,
+            "keys": keys,
+        })
+    }
 }
 
 impl Stats {
@@ -188,21 +215,17 @@ impl Stats {
         self.numbers_checked += o.numbers_checked;
         self.numbers_found += o.numbers_found;
         self.claims_classified += o.claims_classified;
-        self.citing_sentences += o.citing_sentences;
-        self.citing_sentence_keys.extend(o.citing_sentence_keys);
+        self.citing.add(o.citing);
+        self.uncited.add(o.uncited);
     }
 
-    /// The `rf.measure/1` record of the citing sentences, for `--measure`.
-    /// Keys sort as bytes, which is their order as hex strings.
-    pub fn measure(&self) -> Value {
-        let keys: Vec<String> = self.citing_sentence_keys.iter().map(|k| hex(k)).collect();
-        json!({
-            "schema": "rf.measure/1",
-            "tool": "claimcheck",
-            "unit": "citing-sentence",
-            "count": self.citing_sentences,
-            "keys": keys,
-        })
+    /// The `rf.measure/1` records for `--measure`, one per unit, in output
+    /// order. Each checked sentence with text is in exactly one of them.
+    pub fn measures(&self) -> [Value; 2] {
+        [
+            self.citing.record("citing-sentence"),
+            self.uncited.record("uncited-sentence"),
+        ]
     }
 }
 
@@ -433,11 +456,14 @@ impl<'a> Ctx<'a> {
                 let nums = self.numbers_in(block, u, &quoted);
                 let refs = self.refs_of(&u.cites);
                 let line = doc.line_of(unit_offset(block, u));
-                if (cited_quote || !u.cites.is_empty())
-                    && let Some(key) = normalize::sentence_key(&key_text(block, u))
-                {
-                    self.stats.citing_sentences += 1;
-                    self.stats.citing_sentence_keys.insert(key);
+                if let Some(key) = normalize::sentence_key(&key_text(block, u)) {
+                    let m = if cited_quote || !u.cites.is_empty() {
+                        &mut self.stats.citing
+                    } else {
+                        &mut self.stats.uncited
+                    };
+                    m.count += 1;
+                    m.keys.insert(key);
                 }
                 if !refs.is_empty() {
                     if !nums.is_empty() {

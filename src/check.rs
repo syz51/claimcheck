@@ -259,6 +259,29 @@ fn key_text(block: &Block, u: &Unit) -> String {
     t
 }
 
+/// Joins the units that overlap one checked inline quotation. A stop inside
+/// a quotation does not end the sentence that quotes it, so in
+/// `It says "A. B." [1]` the citation covers the whole sentence, as it does
+/// for a quotation of one sentence.
+fn join_quoted(units: Vec<Unit>, quoted: &[(usize, usize)]) -> Vec<Unit> {
+    let overlaps = |u: &Unit, &(s, e): &(usize, usize)| u.start < e && s < u.end;
+    let mut out: Vec<Unit> = Vec::with_capacity(units.len());
+    for u in units {
+        match out.last_mut() {
+            Some(last) if quoted.iter().any(|q| overlaps(last, q) && overlaps(&u, q)) => {
+                last.end = u.end;
+                for c in u.cites {
+                    if !last.cites.contains(&c) {
+                        last.cites.push(c);
+                    }
+                }
+            }
+            _ => out.push(u),
+        }
+    }
+    out
+}
+
 fn refs_list(keys: &[&str]) -> String {
     match keys {
         [one] => format!("reference {one}"),
@@ -415,7 +438,7 @@ impl<'a> Ctx<'a> {
             if matches!(block.kind, BlockKind::Heading(_)) {
                 continue;
             }
-            let units = doc::units(block);
+            let mut units = doc::units(block);
             let spans = doc::quotes(block);
             let mut quoted: Vec<(usize, usize)> = Vec::new();
             if block
@@ -447,18 +470,18 @@ impl<'a> Ctx<'a> {
                     let line = doc.line_of(block.chars[s].off as usize);
                     self.check_quote(line, &chars, &refs);
                 }
+                units = join_quoted(units, &quoted);
             }
             let mut block_claims = false;
+            let cited_quote = block
+                .quote_group
+                .is_some_and(|g| handled_groups.contains(&g));
             for u in &units {
                 let nums = self.numbers_in(block, u, &quoted);
                 let refs = self.refs_of(&u.cites);
                 let line = doc.line_of(unit_offset(block, u));
-                // Part of a quotation checked against its citation: a cited
-                // blockquote, or an inline quotation whose sentences before
-                // the citation marker carry no citation of their own.
-                let in_cited_quote = quoted.iter().any(|&(s, e)| u.start < e && s < u.end);
                 if let Some(key) = normalize::sentence_key(&key_text(block, u)) {
-                    let m = if in_cited_quote || !u.cites.is_empty() {
+                    let m = if cited_quote || !u.cites.is_empty() {
                         &mut self.stats.citing
                     } else {
                         &mut self.stats.uncited
@@ -486,9 +509,7 @@ impl<'a> Ctx<'a> {
                         .filter(|n| !spans.iter().any(|&(s, e)| s <= n.at && n.at < e))
                         .cloned()
                         .collect();
-                    // A cited inline quotation was checked against its
-                    // citation, but the rest of the sentence was not.
-                    block_claims |= self.check_uncited(block, u, line, &own, &quoted);
+                    block_claims |= self.check_uncited(block, u, line, &own);
                 }
                 block_claims |= !nums.is_empty();
             }
@@ -1138,36 +1159,22 @@ impl<'a> Ctx<'a> {
     }
 
     /// Reports an uncited claim; returns whether the unit makes a claim.
-    /// Reports `u` when it makes a claim outside the `cited` quotation
-    /// spans, whose text was checked against their citation instead.
-    fn check_uncited(
-        &mut self,
-        block: &Block,
-        u: &Unit,
-        line: usize,
-        nums: &[DocNumber],
-        cited: &[(usize, usize)],
-    ) -> bool {
-        let (text, map) = block.claim_text(u.start, u.end);
-        let own: String = text
-            .char_indices()
-            .filter(|&(b, _)| !cited.iter().any(|&(s, e)| s <= map[b] && map[b] < e))
-            .map(|(_, c)| c)
-            .collect();
+    fn check_uncited(&mut self, block: &Block, u: &Unit, line: usize, nums: &[DocNumber]) -> bool {
+        let (text, _) = block.claim_text(u.start, u.end);
         let comparative = self
             .p
             .cfg
             .uncited
             .comparative
             .as_ref()
-            .and_then(|re| asserted_matches(re, &own).into_iter().next());
+            .and_then(|re| asserted_matches(re, &text).into_iter().next());
         if nums.is_empty() && comparative.is_none() {
             return false;
         }
         // Questions and hypothetical or normative sentences ("must fit 4,096
         // tokens") assert nothing that a source could support.
-        let question = own.trim_end().ends_with(['?', '\u{FF1F}']);
-        if question || (comparative.is_none() && config::has_modal(&own)) {
+        let question = text.trim_end().ends_with(['?', '\u{FF1F}']);
+        if question || (comparative.is_none() && config::has_modal(&text)) {
             return false;
         }
         if (self.p.cfg.uncited.links_are_evidence && block.links > 0) || self.has_valid_label(block)

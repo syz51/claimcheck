@@ -193,6 +193,8 @@ These are checked:
 
 A quotation is checked when it has a citation in the same sentence or inside it, and has at least `min_words` words or `min_cjk_chars` CJK characters. Shorter ones are terms or scare quotes. A blockquote is checked when it contains a citation, or when the paragraph just before it cites and ends with a colon. A trailing attribution line such as `— Author [3]` is not part of the quoted text.
 
+A sentence stop inside a checked inline quotation does not end the sentence that quotes it. In `Revenue rose 40 % and the CEO said "We grew fast this year. We will grow again." [1]`, the citation covers the whole sentence, as it would for a quotation of one sentence. The 40 % outside the quotation is checked against reference 1, and the quoted sentences are not uncited claims. A quotation that is too short or whose citations do not resolve is not checked, so a stop inside it still ends a sentence.
+
 Both sides are normalized before comparison:
 
 - Unicode NFKC, which covers full-width forms and ligatures such as `ﬁ`;
@@ -251,7 +253,6 @@ These do not count:
 - questions;
 - sentences with a modal or conditional word (for numbers);
 - numbers inside quotation marks;
-- text of a quotation checked against its citation. A cited inline quotation of several sentences is checked as a whole, so its sentences before the citation marker are not uncited claims. Text before or after the quotation in the same sentence is still checked: in `Revenue rose 40 % and the CEO said "…. …" [1]`, the 40 % is an uncited claim;
 - headings, tables and blockquotes.
 
 A non-citation link in the same paragraph counts as evidence when `links_are_evidence` is set, and so does a valid evidence label.
@@ -287,11 +288,11 @@ Entries under a reference-list heading are matched to the registry. The key come
 {"schema":"rf.measure/1","tool":"claimcheck","unit":"uncited-sentence","count":958,"keys":["03b7e2a9c4d16f58","…"]}
 ```
 
-`lab check` stores these records, so lab can judge a check-run lesson by findings per new sentence ([interfaces](https://github.com/syz51/research-factory/blob/main/docs/interfaces.md), "Check-run denominators"). `uncited-claim` fires on sentences that do not cite, so `citing-sentence` does not grow when it fires; `uncited-sentence` does. The one exception is a claim outside a cited inline quotation in the same sentence, which counts in `citing-sentence`. Lab 0.9.0 and earlier read a check that prints several units as measuring no interval, so they need a lab that picks the unit per rule.
+`lab check` stores these records, so lab can judge a check-run lesson by findings per new sentence ([interfaces](https://github.com/syz51/research-factory/blob/main/docs/interfaces.md), "Check-run denominators"). `uncited-claim` fires only on sentences that do not cite, so `citing-sentence` never grows when it fires; `uncited-sentence` does. Lab 0.9.0 and earlier read a check that prints several units as measuring no interval, so they need a lab that picks the unit per rule.
 
 There is one line per unit, always in this order:
 
-1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence that is part of a quotation checked as a cited quotation also counts: every sentence of such a blockquote, and every sentence that overlaps such an inline quotation, also before its citation marker.
+1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence of a blockquote that is checked as a cited quotation also counts. A sentence with a checked inline quotation counts once, however many sentences it quotes (see [Quotations](#quotations)).
 2. **`uncited-sentence`**: every other checked sentence or non-prose block, such as a table header row or a blockquote that cites nothing.
 
 Each checked sentence with text is in exactly one unit, so the two counts add up to all checked sentences. Headings, reference-list entries and units with no text besides citations are in neither.

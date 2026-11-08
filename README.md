@@ -66,7 +66,7 @@ The registry is a JSON Lines file with one reference per line, as written by `pa
 | `title`, `authors`, `year` | Compared with a document's own reference list. |
 | `depth` | How far the source was inspected: `metadata` < `abstract` < `method` < `full` < `artifact` < `reproduced`. Null means unknown. |
 | `texts[].path`, `texts[].sha256` | Extracted source text, relative to the project root, with an optional hash. |
-| `duplicate_of` | The key this entry duplicates. |
+| `duplicate_of` | The key this entry duplicates. An entry with no `texts` is checked against the texts of the survivor at the end of its chain; findings then name it in `data.survivors`. |
 
 The registry is located by the first of these that is set:
 

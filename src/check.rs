@@ -54,9 +54,23 @@ impl Project {
         }
     }
 
-    /// Readable texts of a reference.
+    /// The reference whose texts stand for `r`: `r` itself, or, when `r`
+    /// lists no texts and is a duplicate, the survivor of its chain.
+    fn text_source(&self, r: usize) -> usize {
+        let reference = &self.registry.refs[r];
+        if !self.ref_texts[r].is_empty() || reference.duplicate_of.is_none() {
+            return r;
+        }
+        self.registry
+            .survivor(&reference.key)
+            .and_then(|s| self.registry.index(s))
+            .unwrap_or(r)
+    }
+
+    /// Readable texts of a reference, read from its survivor when it is a
+    /// duplicate without texts of its own.
     fn texts_of(&self, r: usize) -> Vec<(&TextEntry, Arc<IndexedText>)> {
-        self.ref_texts[r]
+        self.ref_texts[self.text_source(r)]
             .iter()
             .filter_map(|&i| {
                 let e = &self.texts[i];
@@ -228,6 +242,17 @@ impl<'a> Ctx<'a> {
 
     fn key(&self, r: usize) -> &'a str {
         &self.p.registry.refs[r].key
+    }
+
+    /// Duplicate key → survivor key, for the references in `refs` whose texts
+    /// were read from their survivor.
+    fn survivors(&self, refs: &[usize]) -> Map<String, Value> {
+        refs.iter()
+            .filter_map(|&r| {
+                let s = self.p.text_source(r);
+                (s != r).then(|| (self.key(r).to_string(), json!(self.key(s))))
+            })
+            .collect()
     }
 
     fn refs_of(&self, cites: &[u32]) -> Vec<usize> {
@@ -600,6 +625,10 @@ impl<'a> Ctx<'a> {
             "references".into(),
             json!(refs.iter().map(|&r| self.key(r)).collect::<Vec<_>>()),
         );
+        let survivors = self.survivors(refs);
+        if !survivors.is_empty() {
+            data.insert("survivors".into(), Value::Object(survivors));
+        }
         let mut evidence = Vec::new();
         if let Some(BestMatch {
             entry,
@@ -763,6 +792,7 @@ impl<'a> Ctx<'a> {
             .map(|&r| self.key(r))
             .collect();
         let keys: Vec<&str> = refs.iter().map(|&r| self.key(r)).collect();
+        let survivors = self.survivors(refs);
         let mut unverifiable: Vec<&str> = Vec::new();
         for n in nums {
             self.stats.numbers_checked += 1;
@@ -801,6 +831,9 @@ impl<'a> Ctx<'a> {
             data.insert("references".into(), json!(keys));
             data.insert("context".into(), json!(n.context));
             data.insert("nearest".into(), Value::Array(nearest));
+            if !survivors.is_empty() {
+                data.insert("survivors".into(), Value::Object(survivors.clone()));
+            }
             if linked {
                 data.insert("linked".into(), json!(true));
             }
@@ -838,6 +871,9 @@ impl<'a> Ctx<'a> {
             data.insert("sentence".into(), json!(sentence));
             data.insert("missing_text".into(), json!(missing));
             data.insert("references".into(), json!(keys));
+            if !survivors.is_empty() {
+                data.insert("survivors".into(), Value::Object(survivors));
+            }
             let msg = format!(
                 "numbers {} cannot be verified: {} no source text",
                 unverifiable.join(", "),

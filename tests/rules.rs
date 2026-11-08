@@ -171,6 +171,106 @@ fn missing_text_is_never_supported() {
     assert!(!rules(&f).contains(&(Rule::NumberNotInSource, Severity::Warn)));
 }
 
+fn duplicate(key: &str, of: &str, texts: &[&str]) -> serde_json::Value {
+    let mut r = reference(key, Some("full"), texts);
+    r["duplicate_of"] = json!(of);
+    r
+}
+
+#[test]
+fn duplicate_without_texts_is_checked_against_its_survivor() {
+    let fx = Fixture::new(
+        &[
+            reference("1", Some("full"), &["texts/1.txt"]),
+            duplicate("5", "6", &[]),
+            duplicate("6", "1", &[]),
+        ],
+        &[("texts/1.txt", SOURCE)],
+        "",
+    );
+    // Supported through the chain 5 → 6 → 1; only the duplicate citation is reported.
+    let f = fx.check("“financial evidence retrieval for annual reports” and 12.3% [5].\n");
+    assert_eq!(
+        rules(&f),
+        [(Rule::CitationDuplicate, Severity::Warn)],
+        "{f:#?}"
+    );
+    let f = fx.check("“financial evidence retrieval for quarterly reports” [5].\n");
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::CitationDuplicate, Severity::Warn),
+            (Rule::QuoteNotFound, Severity::Warn)
+        ]
+    );
+    assert_eq!(f[1].data["survivors"], json!({"5": "1"}));
+    assert_eq!(f[1].evidence[0].path, "texts/1.txt");
+    let f = fx.check("nDCG@10 is 71.5 on FinQA [5].\n");
+    let n = f
+        .iter()
+        .find(|f| f.rule == Rule::NumberNotInSource)
+        .expect("number finding");
+    assert_eq!(n.data["survivors"], json!({"5": "1"}));
+    assert_eq!(n.data["nearest"][0]["value"], "71.2");
+}
+
+#[test]
+fn duplicate_with_own_texts_uses_only_them() {
+    let fx = Fixture::new(
+        &[
+            reference("1", Some("full"), &["texts/1.txt"]),
+            duplicate("5", "1", &["texts/5.txt"]),
+        ],
+        &[
+            ("texts/1.txt", SOURCE),
+            ("texts/5.txt", "Unrelated text.\n"),
+        ],
+        "",
+    );
+    let f = fx.check("“financial evidence retrieval for annual reports” [5].\n");
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::CitationDuplicate, Severity::Warn),
+            (Rule::QuoteNotFound, Severity::Error)
+        ]
+    );
+    assert!(f[1].data.get("survivors").is_none(), "{:#?}", f[1].data);
+}
+
+#[test]
+fn broken_or_cyclic_duplicate_chain_is_missing_text() {
+    let fx = Fixture::new(
+        &[
+            reference("1", Some("full"), &["texts/1.txt"]),
+            duplicate("5", "9", &[]),
+            duplicate("6", "7", &[]),
+            duplicate("7", "6", &[]),
+        ],
+        &[("texts/1.txt", SOURCE)],
+        "",
+    );
+    for key in ["5", "6"] {
+        let f = fx.check(&format!(
+            "“financial evidence retrieval for annual reports” [{key}].\n"
+        ));
+        assert_eq!(
+            rules(&f),
+            [
+                (Rule::CitationDuplicate, Severity::Warn),
+                (Rule::SourceTextMissing, Severity::Warn)
+            ],
+            "{key}: {f:#?}"
+        );
+        assert!(f[1].data.get("survivors").is_none(), "{:#?}", f[1].data);
+        let f = fx.check(&format!("Accuracy is 12.3% [{key}].\n"));
+        assert!(
+            rules(&f).contains(&(Rule::SourceTextMissing, Severity::Warn)),
+            "{key}: {f:#?}"
+        );
+    }
+}
+
 #[test]
 fn unreadable_text_is_missing_not_supported() {
     let fx = Fixture::new(

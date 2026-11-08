@@ -741,7 +741,9 @@ fn measure_counts_citing_and_uncited_sentences() {
     );
     // Citing: two sentences, the table row, the blockquote and the sentence
     // that cites it in a.md; two sentences in b.md. In neither unit: the
-    // heading, the paragraph of only a citation and the reference list.
+    // heading, the paragraph of only a citation and the reference list, and
+    // the uncited table rows and blockquote (not prose). Uncited tables and
+    // blockquotes leave the citing unit as it was.
     // "Retrieval helps" is one key in both files, wherever its citation
     // stands. Keys hash the text without citation markers or the whitespace
     // before them, e.g.
@@ -760,19 +762,17 @@ fn measure_counts_citing_and_uncited_sentences() {
             "e94b58cad0101603", // Retrieval helps.
         ],
     });
-    // Uncited: "No citation here." in both files, the table header, the
-    // uncited row, the blockquote that cites nothing, and "Retrieval helps."
-    // without a citation in b.md, whose key is also a citing key.
+    // Uncited: the prose sentences without a citation outside blockquotes:
+    // "No citation here." in both files and "Retrieval helps." without a
+    // citation in b.md, whose key is also a citing key. Not the table header
+    // "Model Score", the row "B 64.0" or the blockquote "A plain aside.".
     let uncited = json!({
         "schema": "rf.measure/1",
         "tool": "claimcheck",
         "unit": "uncited-sentence",
-        "count": 6,
+        "count": 3,
         "keys": [
             "1acbcc3c80e3d6c2", // No citation here.
-            "b0f0127157c7a305", // B 64.0
-            "b3c2a64a410a052b", // A plain aside.
-            "e88571788f1a2095", // Model Score
             "e94b58cad0101603", // Retrieval helps.
         ],
     });
@@ -795,7 +795,48 @@ fn measure_counts_citing_and_uncited_sentences() {
 }
 
 #[test]
-fn measure_puts_each_sentence_in_one_unit() {
+fn measure_counts_only_prose_outside_blockquotes_as_uncited() {
+    let fx = basic();
+    let measure = |md: &str| {
+        let st = check_document(&fx.project, "doc.md", md.to_string(), 0).1;
+        (st.citing.count, st.uncited.count)
+    };
+    // Prose: a paragraph and a list item.
+    assert_eq!(
+        measure("Accuracy rose. It fell.\n\n- A list item.\n"),
+        (0, 3)
+    );
+    // Table rows, header included, and blockquote sentences that cite
+    // nothing are in no unit; a cited row still cites.
+    assert_eq!(
+        measure("| Model | Score |\n| --- | --- |\n| A | 64.0 |\n| B | 71.2 [1] |\n"),
+        (1, 0)
+    );
+    assert_eq!(measure("> An aside. Another one.\n"), (0, 0));
+    // A cited blockquote still cites, sentence by sentence.
+    assert_eq!(
+        measure(
+            "> We study financial evidence retrieval for annual reports. Our method reaches 12.3 % accuracy [1].\n"
+        ),
+        (2, 0)
+    );
+    // The paragraph next to them still counts.
+    assert_eq!(measure("> An aside.\n\nNo citation here.\n"), (0, 1));
+    // A blockquote not checked as a quotation, because it is too short or
+    // its key does not resolve: its cited sentences cite, the others are in
+    // no unit. So is a list item inside a blockquote.
+    assert_eq!(measure("> Short. Yes [1].\n"), (1, 0));
+    assert_eq!(measure("> It rose. Accuracy rose 12 % [9].\n"), (1, 0));
+    assert_eq!(measure("> - A list item.\n"), (0, 0));
+    // Every sentence uncited-claim reports is an uncited-sentence unit.
+    let md = "Accuracy rose to 87.5% in the pilot. Our system outperforms every baseline.\n\n- Recall fell to 40% overall.\n\n> Recall fell to 30% overall.\n";
+    let (f, st) = check_document(&fx.project, "doc.md", md.to_string(), 0);
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn); 3]);
+    assert_eq!((st.citing.count, st.uncited.count), (0, 3));
+}
+
+#[test]
+fn measure_puts_each_prose_sentence_in_one_unit() {
     // (sentence as written, its key text, whether it cites)
     let sentences = [
         ("Retrieval helps [1].", "Retrieval helps.", true),

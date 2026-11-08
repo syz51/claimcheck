@@ -599,6 +599,92 @@ fn cli_exit_codes_and_jsonl() {
     );
 }
 
+fn inline_quote_fixture() -> Fixture {
+    Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[(
+            "texts/1.txt",
+            "Our retriever outperforms BM25 on every split. Evidence is scattered across many sections.\n",
+        )],
+        "",
+    )
+}
+
+const TWO_SENTENCE_QUOTE: &str = "The authors write \"Our retriever outperforms BM25 on every split. Evidence is scattered across many sections.\"";
+
+#[test]
+fn cited_inline_quotation_sentences_are_not_uncited() {
+    let fx = inline_quote_fixture();
+    // The quotation is checked against [1] as a whole, so its first
+    // sentence, before the marker, is not an uncited claim.
+    let f = fx.check(&format!("{TWO_SENTENCE_QUOTE} [1]\n"));
+    assert!(f.is_empty(), "{f:#?}");
+    // Without a citation, or with only an unresolved one, the quotation is
+    // not checked, so its comparative claim is still uncited.
+    let f = fx.check(&format!("{TWO_SENTENCE_QUOTE}\n"));
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+    let f = fx.check(&format!("{TWO_SENTENCE_QUOTE} [9]\n"));
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::CitationUnresolved, Severity::Error),
+            (Rule::UncitedClaim, Severity::Warn),
+        ]
+    );
+    // Too short to be checked as a quotation: unchanged.
+    let f = fx.check("It \"outperforms. Yes.\" [1]\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+}
+
+#[test]
+fn claim_outside_a_cited_inline_quotation_is_checked_against_its_citation() {
+    let fx = inline_quote_fixture();
+    // "40 %" is in the sentence that quotes, not in the quotation. As with a
+    // quotation of one sentence, the sentence cites [1], so the number is
+    // checked against [1], whose text lacks it.
+    let one = "Evidence is scattered across many sections.";
+    let two = "Our retriever outperforms BM25 on every split. Evidence is scattered across many sections.";
+    for quote in [one, two] {
+        let f = fx.check(&format!(
+            "Revenue rose 40 % and the authors write \"{quote}\" [1]\n"
+        ));
+        assert_eq!(
+            rules(&f),
+            [(Rule::NumberNotInSource, Severity::Warn)],
+            "{quote}: {f:#?}"
+        );
+        assert_eq!(f[0].subject, "doc.md:1");
+    }
+    // The same after the quotation, with the citation before it.
+    let f = fx.check(&format!(
+        "Smith [1] writes \"{two}\" and revenue rose 40 % in May.\n"
+    ));
+    assert_eq!(
+        rules(&f),
+        [(Rule::NumberNotInSource, Severity::Warn)],
+        "{f:#?}"
+    );
+}
+
+#[test]
+fn measure_counts_a_sentence_quoting_several_as_one_citing_sentence() {
+    let fx = inline_quote_fixture();
+    let measure = |md: &str| {
+        let st = check_document(&fx.project, "doc.md", md.to_string(), 0).1;
+        (st.citing.count, st.uncited.count)
+    };
+    // The sentence with the cited quotation is one citing sentence; the next
+    // sentence does not cite.
+    assert_eq!(
+        measure(&format!("{TWO_SENTENCE_QUOTE} [1] Then we stop.\n")),
+        (1, 1)
+    );
+    // Not checked as a quotation: split at the stop inside it, as before.
+    assert_eq!(measure(&format!("{TWO_SENTENCE_QUOTE}\n")), (0, 2));
+    assert_eq!(measure(&format!("{TWO_SENTENCE_QUOTE} [9]\n")), (1, 1));
+    assert_eq!(measure("It \"outperforms. Yes.\" [1]\n"), (1, 1));
+}
+
 #[test]
 fn measure_counts_citing_and_uncited_sentences() {
     let doc_a = "# Heading [1]\n\n\

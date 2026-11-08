@@ -259,6 +259,29 @@ fn key_text(block: &Block, u: &Unit) -> String {
     t
 }
 
+/// Joins the units that overlap one checked inline quotation. A stop inside
+/// a quotation does not end the sentence that quotes it, so in
+/// `It says "A. B." [1]` the citation covers the whole sentence, as it does
+/// for a quotation of one sentence.
+fn join_quoted(units: Vec<Unit>, quoted: &[(usize, usize)]) -> Vec<Unit> {
+    let overlaps = |u: &Unit, &(s, e): &(usize, usize)| u.start < e && s < u.end;
+    let mut out: Vec<Unit> = Vec::with_capacity(units.len());
+    for u in units {
+        match out.last_mut() {
+            Some(last) if quoted.iter().any(|q| overlaps(last, q) && overlaps(&u, q)) => {
+                last.end = u.end;
+                for c in u.cites {
+                    if !last.cites.contains(&c) {
+                        last.cites.push(c);
+                    }
+                }
+            }
+            _ => out.push(u),
+        }
+    }
+    out
+}
+
 fn refs_list(keys: &[&str]) -> String {
     match keys {
         [one] => format!("reference {one}"),
@@ -415,7 +438,7 @@ impl<'a> Ctx<'a> {
             if matches!(block.kind, BlockKind::Heading(_)) {
                 continue;
             }
-            let units = doc::units(block);
+            let mut units = doc::units(block);
             let spans = doc::quotes(block);
             let mut quoted: Vec<(usize, usize)> = Vec::new();
             if block
@@ -447,6 +470,7 @@ impl<'a> Ctx<'a> {
                     let line = doc.line_of(block.chars[s].off as usize);
                     self.check_quote(line, &chars, &refs);
                 }
+                units = join_quoted(units, &quoted);
             }
             let mut block_claims = false;
             let cited_quote = block

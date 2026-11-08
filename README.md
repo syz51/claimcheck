@@ -193,6 +193,8 @@ These are checked:
 
 A quotation is checked when it has a citation in the same sentence or inside it, and has at least `min_words` words or `min_cjk_chars` CJK characters. Shorter ones are terms or scare quotes. A blockquote is checked when it contains a citation, or when the paragraph just before it cites and ends with a colon. A trailing attribution line such as `— Author [3]` is not part of the quoted text.
 
+A sentence stop inside a checked inline quotation does not end the sentence that quotes it. In `Revenue rose 40 % and the CEO said "We grew fast this year. We will grow again." [1]`, the citation covers the whole sentence, as it would for a quotation of one sentence. The 40 % outside the quotation is checked against reference 1, and the quoted sentences are not uncited claims. A quotation that is too short or whose citations do not resolve is not checked, so a stop inside it still ends a sentence.
+
 Both sides are normalized before comparison:
 
 - Unicode NFKC, which covers full-width forms and ligatures such as `ﬁ`;
@@ -290,7 +292,7 @@ Entries under a reference-list heading are matched to the registry. The key come
 
 There is one line per unit, always in this order:
 
-1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence of a blockquote that is checked as a cited quotation also counts.
+1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence of a blockquote that is checked as a cited quotation also counts. A sentence with a checked inline quotation counts once, however many sentences it quotes (see [Quotations](#quotations)).
 2. **`uncited-sentence`**: every other checked sentence or non-prose block, such as a table header row or a blockquote that cites nothing.
 
 Each checked sentence with text is in exactly one unit, so the two counts add up to all checked sentences. Headings, reference-list entries and units with no text besides citations are in neither.

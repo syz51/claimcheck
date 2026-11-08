@@ -449,15 +449,16 @@ impl<'a> Ctx<'a> {
                 }
             }
             let mut block_claims = false;
-            let cited_quote = block
-                .quote_group
-                .is_some_and(|g| handled_groups.contains(&g));
             for u in &units {
                 let nums = self.numbers_in(block, u, &quoted);
                 let refs = self.refs_of(&u.cites);
                 let line = doc.line_of(unit_offset(block, u));
+                // Part of a quotation checked against its citation: a cited
+                // blockquote, or an inline quotation whose sentences before
+                // the citation marker carry no citation of their own.
+                let in_cited_quote = quoted.iter().any(|&(s, e)| u.start < e && s < u.end);
                 if let Some(key) = normalize::sentence_key(&key_text(block, u)) {
-                    let m = if cited_quote || !u.cites.is_empty() {
+                    let m = if in_cited_quote || !u.cites.is_empty() {
                         &mut self.stats.citing
                     } else {
                         &mut self.stats.uncited
@@ -477,6 +478,8 @@ impl<'a> Ctx<'a> {
                 } else if !u.cites.is_empty() {
                     // Every key is unresolved: citation-unresolved reports it,
                     // and the sentence still cites, so it is not uncited.
+                } else if in_cited_quote {
+                    // check_quote checked it against the quotation's citation.
                 } else if block.is_prose() && block.quote_group.is_none() {
                     // A number inside quotation marks belongs to quoted or
                     // illustrative text, not to a claim of the sentence.

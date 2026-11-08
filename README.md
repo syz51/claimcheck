@@ -251,6 +251,7 @@ These do not count:
 - questions;
 - sentences with a modal or conditional word (for numbers);
 - numbers inside quotation marks;
+- sentences that are part of a quotation checked against its citation. A cited inline quotation of several sentences is checked as a whole, so its sentences before the citation marker count as cited, and so does the text before the quotation in the same sentence;
 - headings, tables and blockquotes.
 
 A non-citation link in the same paragraph counts as evidence when `links_are_evidence` is set, and so does a valid evidence label.
@@ -290,7 +291,7 @@ Entries under a reference-list heading are matched to the registry. The key come
 
 There is one line per unit, always in this order:
 
-1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence of a blockquote that is checked as a cited quotation also counts.
+1. **`citing-sentence`**: the sentences that cite at least one reference, resolved or not. A non-prose block, such as a table row, counts as one sentence. Each sentence that is part of a quotation checked as a cited quotation also counts: every sentence of such a blockquote, and every sentence that overlaps such an inline quotation, also before its citation marker.
 2. **`uncited-sentence`**: every other checked sentence or non-prose block, such as a table header row or a blockquote that cites nothing.
 
 Each checked sentence with text is in exactly one unit, so the two counts add up to all checked sentences. Headings, reference-list entries and units with no text besides citations are in neither.

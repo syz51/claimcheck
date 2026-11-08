@@ -599,6 +599,60 @@ fn cli_exit_codes_and_jsonl() {
     );
 }
 
+fn inline_quote_fixture() -> Fixture {
+    Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[(
+            "texts/1.txt",
+            "Our retriever outperforms BM25 on every split. Evidence is scattered across many sections.\n",
+        )],
+        "",
+    )
+}
+
+const TWO_SENTENCE_QUOTE: &str = "The authors write \"Our retriever outperforms BM25 on every split. Evidence is scattered across many sections.\"";
+
+#[test]
+fn cited_inline_quotation_sentences_are_not_uncited() {
+    let fx = inline_quote_fixture();
+    // The quotation is checked against [1] as a whole, so its first
+    // sentence, before the marker, is not an uncited claim.
+    let f = fx.check(&format!("{TWO_SENTENCE_QUOTE} [1]\n"));
+    assert!(f.is_empty(), "{f:#?}");
+    // Without a citation, or with only an unresolved one, the quotation is
+    // not checked, so its comparative claim is still uncited.
+    let f = fx.check(&format!("{TWO_SENTENCE_QUOTE}\n"));
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+    let f = fx.check(&format!("{TWO_SENTENCE_QUOTE} [9]\n"));
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::CitationUnresolved, Severity::Error),
+            (Rule::UncitedClaim, Severity::Warn),
+        ]
+    );
+    // Too short to be checked as a quotation: unchanged.
+    let f = fx.check("It \"outperforms. Yes.\" [1]\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+}
+
+#[test]
+fn measure_counts_cited_inline_quotation_sentences_as_citing() {
+    let fx = inline_quote_fixture();
+    let measure = |md: &str| {
+        let st = check_document(&fx.project, "doc.md", md.to_string(), 0).1;
+        (st.citing.count, st.uncited.count)
+    };
+    // Both sentences of the cited quotation cite; the next sentence does not.
+    assert_eq!(
+        measure(&format!("{TWO_SENTENCE_QUOTE} [1] Then we stop.\n")),
+        (2, 1)
+    );
+    assert_eq!(measure(&format!("{TWO_SENTENCE_QUOTE}\n")), (0, 2));
+    assert_eq!(measure(&format!("{TWO_SENTENCE_QUOTE} [9]\n")), (1, 1));
+    assert_eq!(measure("It \"outperforms. Yes.\" [1]\n"), (1, 1));
+}
+
 #[test]
 fn measure_counts_citing_and_uncited_sentences() {
     let doc_a = "# Heading [1]\n\n\

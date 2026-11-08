@@ -215,7 +215,7 @@ pub fn run(project: &Project, files: &[PathBuf]) -> Result<(Vec<Finding>, Stats)
     let mut stats = Stats::default();
     for (_, f, st) in results {
         findings.extend(f);
-        stats.add(&st);
+        stats.add(st);
     }
     findings.extend(project.text_findings(files.len()));
     Ok((findings, stats))

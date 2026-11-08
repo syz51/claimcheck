@@ -600,16 +600,20 @@ fn cli_exit_codes_and_jsonl() {
 
 #[test]
 fn measure_counts_citing_sentences() {
+    let doc_a = "# Heading [1]\n\n\
+        Retrieval helps [1]. No citation here.\nIt reaches 12.3 % accuracy\n  [1].\n\n\
+        | Model | Score |\n| --- | --- |\n| A | 71.2 [1] |\n\n\
+        As the paper notes [1]:\n\n\
+        > We study financial evidence retrieval for annual reports and more.\n\n\
+        [1]\n\n\
+        ## References\n\n1. Ada Example. Synthetic Paper 1. 2025.\n";
     let root = temp_project(&[
         (
             "research.toml",
             "[project]\nname = \"t\"\n\n[claimcheck]\npaths = [\"docs\"]\n",
         ),
-        (
-            "docs/a.md",
-            "Retrieval helps [1]. No citation here.\nIt reaches 12.3 % accuracy\n  [1].\n\n## References\n\n1. Ada Example. Synthetic Paper 1. 2025.\n",
-        ),
-        ("docs/b.md", "Retrieval   helps [1]. See [8] too.\n"),
+        ("docs/a.md", doc_a),
+        ("docs/b.md", "Retrieval helps.[1] See [8] too.\n"),
     ]);
     let line = reference("1", Some("full"), &[]).to_string();
     std::fs::write(root.join("references.jsonl"), format!("{line}\n")).unwrap();
@@ -644,46 +648,40 @@ fn measure_counts_citing_sentences() {
         Some(measures[0]),
         "the record follows the findings"
     );
-    let m = measures[0];
-    assert_eq!(m["tool"], "claimcheck");
-    assert_eq!(m["unit"], "citing-sentence");
-    // Two sentences in a.md and two in b.md cite; the reference list does not count.
-    assert_eq!(m["count"], 4);
-    let keys: Vec<&str> = m["keys"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|k| k.as_str().unwrap())
-        .collect();
-    // The same sentence in a.md and b.md, spaced differently, has one key.
-    // Citation markers are left out, as in a finding's `sentence`.
-    let mut want: Vec<String> = [
-        "Retrieval helps .",
-        "It reaches 12.3 % accuracy .",
-        "See too.",
-    ]
-    .iter()
-    .map(|s| claimcheck::normalize::sentence_key(s))
-    .collect();
-    want.sort();
-    assert_eq!(keys, want);
-    for k in &keys {
-        assert!(
-            k.len() == 16 && k.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
-            "{k}"
-        );
-    }
+    // Counted: two sentences, the table row, the blockquote and the sentence
+    // that cites it in a.md; two sentences in b.md. Not counted: the heading,
+    // the uncited sentence, the paragraph of only a citation and the
+    // reference list. "Retrieval helps" is one key in both files, wherever
+    // its citation stands. Keys hash the text without citation markers or
+    // the whitespace before them, e.g.
+    // printf 'It reaches 12.3 %% accuracy.' | shasum -a 256
+    let want = json!({
+        "schema": "rf.measure/1",
+        "tool": "claimcheck",
+        "unit": "citing-sentence",
+        "count": 7,
+        "keys": [
+            "45195695e16dae10", // As the paper notes:
+            "491aee4147607ebd", // We study financial evidence retrieval for annual reports and more.
+            "527955041d16026a", // It reaches 12.3 % accuracy.
+            "7c6f9ee69ba13da4", // See too.
+            "d453de4d99621a35", // A 71.2
+            "e94b58cad0101603", // Retrieval helps.
+        ],
+    });
+    assert_eq!(measures[0], &want);
 
     let plain = run(&["check", "--format", "jsonl"]);
     assert!(!plain.contains("rf.measure/1"), "{plain}");
     assert_eq!(plain.lines().count(), rows.len() - 1);
 
-    let text = run(&["check", "--measure"]);
+    // In text mode the record is the last line, after the summary.
+    let text = run(&["check", "--measure", "--summary"]);
+    assert!(text.contains("citations 8"), "{text}");
+    let last = text.lines().last().unwrap();
     assert_eq!(
-        text.lines()
-            .last()
-            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()),
-        Some(m.clone())
+        serde_json::from_str::<serde_json::Value>(last).unwrap(),
+        want
     );
 }
 

@@ -265,6 +265,8 @@ A label is the leading `Label:` or `**Label:**` of a paragraph or list item. Wit
 - a missing label when `require` asks for one (warn);
 - a cited reference shallower than the label's `min_depth` (error, or info when its depth is unknown).
 
+Each of these findings has `paragraph_key` in its `data`: 16 hex digits of a SHA-256 hash. The hash covers the paragraph's first sentence with a letter or digit, without citation markers, and the reference keys that sentence cites. A paragraph without such a sentence hashes only the keys it cites. Sentences are split as claimcheck splits them before it checks inline quotations, so the key does not depend on the registry or the configuration. So the same finding in two paragraphs has distinct data, unless their first sentences have the same text and citations. A paragraph keeps its key when it moves, and when a sentence after its first one changes. Lab counts an introduced finding by its message and data, so this lets it count each paragraph.
+
 ### Reference lists
 
 Entries under a reference-list heading are matched to the registry. The key comes from a leading citation such as `[N]` or `[@key]`, or from the number of an ordered-list item (`N.`). The entry text must contain the registry title or match it with at least `title_similarity`. It must also contain the year and the first author's surname, when the registry knows them. An entry with no year at all is a mismatch, a letter suffix counts as the year ("2025a" is 2025), and digits inside identifiers (`arXiv:2012.01234`, `10.1145/2009916`) are not years.
@@ -279,7 +281,7 @@ Entries under a reference-list heading are matched to the registry. The key come
  "at":"2026-01-01T00:00:00Z"}
 ```
 
-`subject` is `path:line`, with the path relative to the project root. Registry-level findings such as `source-text-changed` use the reference key. `evidence` points into source texts. `data` carries rule-specific fields such as `quote`, `similarity`, `best_match`, `sentence`, `kinds`, `near_citation` and `required`.
+`subject` is `path:line`, with the path relative to the project root. Registry-level findings such as `source-text-changed` use the reference key. `evidence` points into source texts. `data` carries rule-specific fields such as `quote`, `similarity`, `best_match`, `sentence`, `kinds`, `near_citation`, `required` and `paragraph_key`.
 
 ### Denominator: `rf.measure/1`
 

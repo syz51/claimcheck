@@ -396,6 +396,12 @@ impl TextEntry {
         })
     }
 
+    /// The file differs from the registry's SHA-256. A match in it is not
+    /// evidence: quotations and numbers found only there are unverified.
+    pub fn changed(&self) -> bool {
+        self.get().hash_mismatch.is_some()
+    }
+
     /// The load result if the file was needed during this run.
     pub fn loaded(&self) -> Option<&Loaded> {
         self.cell.get()

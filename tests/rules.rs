@@ -583,16 +583,78 @@ fn reference_list_entries() {
 }
 
 #[test]
-fn hash_mismatch_is_reported_once() {
+fn hash_mismatch_makes_matches_unverified() {
     let mut r = reference("1", Some("full"), &["texts/1.txt"]);
     r["texts"][0]["sha256"] = json!("00");
     let fx = Fixture::new(&[r], &[("texts/1.txt", SOURCE)], "");
-    let f = fx.check("“financial evidence retrieval for annual reports” [1].\n");
-    assert!(f.is_empty());
+    let (f, stats) = check_document(
+        &fx.project,
+        "doc.md",
+        "“financial evidence retrieval for annual reports” [1].\n\nIt reaches 12.3 % accuracy [1].\n".into(),
+        0,
+    );
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::SourceTextChanged, Severity::Warn),
+            (Rule::SourceTextChanged, Severity::Warn)
+        ]
+    );
+    assert_eq!(f[0].subject, "doc.md:1");
+    assert!(
+        f[0].message.contains("quotation is unverified"),
+        "{}",
+        f[0].message
+    );
+    assert_eq!(f[0].data["changed_text"], json!(["texts/1.txt"]));
+    assert_eq!(f[1].subject, "doc.md:3");
+    assert_eq!(f[1].data["numbers"], json!(["12.3%"]));
+    assert_eq!((stats.quotes_checked, stats.quotes_supported), (1, 0));
+    assert_eq!((stats.numbers_checked, stats.numbers_found), (1, 0));
+    // The file-level finding is still reported once.
     assert_eq!(
         rules(&fx.project.text_findings(1)),
         [(Rule::SourceTextChanged, Severity::Warn)]
     );
+}
+
+#[test]
+fn matching_hash_still_verifies() {
+    let mut r = reference("1", Some("full"), &["texts/1.txt"]);
+    let hash: String = Sha256::digest(SOURCE.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect();
+    r["texts"][0]["sha256"] = json!(hash);
+    let fx = Fixture::new(&[r], &[("texts/1.txt", SOURCE)], "");
+    let (f, stats) = check_document(
+        &fx.project,
+        "doc.md",
+        "“financial evidence retrieval for annual reports” [1].\n\nIt reaches 12.3 % accuracy [1].\n".into(),
+        0,
+    );
+    assert!(f.is_empty(), "{f:?}");
+    assert_eq!((stats.quotes_supported, stats.numbers_found), (1, 1));
+    assert!(fx.project.text_findings(1).is_empty());
+}
+
+#[test]
+fn unchanged_text_of_another_reference_verifies() {
+    let mut changed = reference("1", Some("full"), &["texts/1.txt"]);
+    changed["texts"][0]["sha256"] = json!("00");
+    let fx = Fixture::new(
+        &[changed, reference("2", Some("full"), &["texts/2.txt"])],
+        &[("texts/1.txt", SOURCE), ("texts/2.txt", SOURCE)],
+        "",
+    );
+    let (f, stats) = check_document(
+        &fx.project,
+        "doc.md",
+        "“financial evidence retrieval for annual reports” [1], [2].\n\nIt reaches 12.3 % accuracy [1], [2].\n".into(),
+        0,
+    );
+    assert!(f.is_empty(), "{f:?}");
+    assert_eq!((stats.quotes_supported, stats.numbers_found), (1, 1));
 }
 
 #[test]

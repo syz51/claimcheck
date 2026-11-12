@@ -383,6 +383,27 @@ impl<'a> Ctx<'a> {
             .collect()
     }
 
+    /// The registry's text paths for the references in `refs` that have no
+    /// readable text, each once. A reference that lists no text adds none.
+    fn missing_text_evidence(&self, refs: &[usize]) -> Vec<Evidence> {
+        let mut out: Vec<Evidence> = Vec::new();
+        for &r in refs {
+            if !self.p.texts_of(r).is_empty() {
+                continue;
+            }
+            for &i in &self.p.ref_texts[self.p.text_source(r)] {
+                let path = &self.p.texts[i].display;
+                if !out.iter().any(|e| &e.path == path) {
+                    out.push(Evidence {
+                        path: path.clone(),
+                        locator: format!("missing text of reference {}", self.key(r)),
+                    });
+                }
+            }
+        }
+        out
+    }
+
     fn refs_of(&self, cites: &[u32]) -> Vec<usize> {
         let mut out = Vec::new();
         for &c in cites {
@@ -837,6 +858,7 @@ impl<'a> Ctx<'a> {
         }
         if !missing.is_empty() {
             data.insert("missing_text".into(), json!(missing));
+            evidence.extend(self.missing_text_evidence(refs));
             let msg = format!(
                 "quotation cannot be verified: {} no source text",
                 refs_have(&missing)
@@ -1170,12 +1192,13 @@ impl<'a> Ctx<'a> {
                 unverifiable.join(", "),
                 refs_have(&missing)
             );
+            let evidence = self.missing_text_evidence(refs);
             self.emit(
                 Rule::SourceTextMissing,
                 Severity::Warn,
                 line,
                 msg,
-                vec![],
+                evidence,
                 data,
             );
         }

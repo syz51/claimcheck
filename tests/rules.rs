@@ -287,6 +287,69 @@ fn unreadable_text_is_missing_not_supported() {
 }
 
 #[test]
+fn missing_text_evidence_names_the_registry_paths() {
+    let fx = Fixture::new(
+        &[
+            reference("1", Some("full"), &["texts/1.txt"]),
+            reference("2", Some("full"), &["texts/absent.txt", "texts/gone.txt"]),
+            reference("3", None, &[]),
+            duplicate("5", "2", &[]),
+        ],
+        &[("texts/1.txt", SOURCE)],
+        "",
+    );
+    let paths = |f: &Finding| -> Vec<(String, String)> {
+        f.evidence
+            .iter()
+            .map(|e| (e.path.clone(), e.locator.clone()))
+            .collect()
+    };
+    let missing =
+        |path: &str, key: &str| (path.to_string(), format!("missing text of reference {key}"));
+    // Quotation: each listed path once, after any best match; message and
+    // subject as before.
+    let f = fx.check("“financial evidence retrieval for quarterly reports” [1], [2], [3], [5].\n");
+    let q = f
+        .iter()
+        .find(|f| f.rule == Rule::SourceTextMissing)
+        .expect("quote finding");
+    assert_eq!(q.subject, "doc.md:1");
+    assert_eq!(
+        q.message,
+        "quotation cannot be verified: references 2, 3, 5 have no source text"
+    );
+    let e = paths(q);
+    assert_eq!(e[0].0, "texts/1.txt");
+    assert_eq!(
+        e[1..],
+        [
+            missing("texts/absent.txt", "2"),
+            missing("texts/gone.txt", "2")
+        ]
+    );
+    // Numbers: a duplicate names its survivor's paths; a reference without
+    // texts adds none.
+    let f = fx.check("Accuracy is 12.3% [5].\n");
+    let n = f
+        .iter()
+        .find(|f| f.rule == Rule::SourceTextMissing)
+        .expect("number finding");
+    assert_eq!(
+        paths(n),
+        [
+            missing("texts/absent.txt", "5"),
+            missing("texts/gone.txt", "5")
+        ]
+    );
+    let f = fx.check("Accuracy is 12.3% [3].\n");
+    let n = f
+        .iter()
+        .find(|f| f.rule == Rule::SourceTextMissing)
+        .expect("number finding");
+    assert!(n.evidence.is_empty(), "{n:#?}");
+}
+
+#[test]
 fn blockquote_attached_to_citation() {
     let fx = basic();
     let md =

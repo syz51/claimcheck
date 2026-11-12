@@ -709,6 +709,8 @@ impl<'a> Ctx<'a> {
             .map(|&r| self.key(r))
             .collect();
         let mut best: Option<BestMatch> = None;
+        // First text, in a changed file, that holds the quotation verbatim.
+        let mut changed_hit: Option<(&TextEntry, &str)> = None;
         for &r in refs {
             for (entry, text) in self.p.texts_of(r) {
                 let seg_strs: Vec<String> = segments.iter().map(|s| s.iter().collect()).collect();
@@ -724,8 +726,12 @@ impl<'a> Ctx<'a> {
                     }
                 }
                 if all && in_order {
-                    self.stats.quotes_supported += 1;
-                    return;
+                    if !entry.changed() {
+                        self.stats.quotes_supported += 1;
+                        return;
+                    }
+                    changed_hit.get_or_insert((entry, self.key(r)));
+                    continue;
                 }
                 // Approximate: the worst segment decides. Anything short of a
                 // bounded exact match scores below 1.
@@ -780,6 +786,29 @@ impl<'a> Ctx<'a> {
             json!(refs.iter().map(|&r| self.key(r)).collect::<Vec<_>>()),
         );
         let survivors = self.survivors(refs);
+        if let Some((entry, key)) = changed_hit {
+            if !survivors.is_empty() {
+                data.insert("survivors".into(), Value::Object(survivors));
+            }
+            data.insert("changed_text".into(), json!([entry.display]));
+            let msg = format!(
+                "quotation is unverified: it occurs only in text file {} of reference {key}, which does not match the SHA-256 recorded in the registry",
+                entry.display
+            );
+            let evidence = vec![Evidence {
+                path: entry.display.clone(),
+                locator: "file".into(),
+            }];
+            self.emit(
+                Rule::SourceTextChanged,
+                Severity::Warn,
+                line,
+                msg,
+                evidence,
+                data,
+            );
+            return;
+        }
         if !survivors.is_empty() {
             data.insert("survivors".into(), Value::Object(survivors));
         }
@@ -948,20 +977,41 @@ impl<'a> Ctx<'a> {
         let keys: Vec<&str> = refs.iter().map(|&r| self.key(r)).collect();
         let survivors = self.survivors(refs);
         let mut unverifiable: Vec<&str> = Vec::new();
+        // Numbers found only in texts that differ from the registry's hash,
+        // and those texts' paths.
+        let mut changed_nums: Vec<&str> = Vec::new();
+        let mut changed_paths: Vec<&str> = Vec::new();
         for n in nums {
             self.stats.numbers_checked += 1;
-            if texts
-                .iter()
-                .any(|(_, _, t)| n.tok.lookup_keys().iter().any(|v| t.has_number(v)))
-            {
+            let cfg = &self.p.cfg.numbers;
+            let exact = |t: &IndexedText| n.tok.lookup_keys().iter().any(|v| t.has_number(v));
+            let near_in = |t: &IndexedText| {
+                t.near_number(&n.tok, &n.context, cfg.context_window, cfg.match_rounded)
+            };
+            if texts.iter().any(|(_, e, t)| !e.changed() && exact(t)) {
                 self.stats.numbers_found += 1;
                 continue;
             }
-            let cfg = &self.p.cfg.numbers;
-            let near = texts.iter().find_map(|(r, e, t)| {
-                t.near_number(&n.tok, &n.context, cfg.context_window, cfg.match_rounded)
-                    .map(|m| (*r, *e, m))
-            });
+            let near = texts
+                .iter()
+                .filter(|(_, e, _)| !e.changed())
+                .find_map(|(r, e, t)| near_in(t).map(|m| (*r, *e, m)));
+            if near.is_none() {
+                let in_changed: Vec<&str> = texts
+                    .iter()
+                    .filter(|(_, e, t)| e.changed() && (exact(t) || near_in(t).is_some()))
+                    .map(|(_, e, _)| e.display.as_str())
+                    .collect();
+                if !in_changed.is_empty() {
+                    changed_nums.push(&n.shown);
+                    for p in in_changed {
+                        if !changed_paths.contains(&p) {
+                            changed_paths.push(p);
+                        }
+                    }
+                    continue;
+                }
+            }
             if let Some((r, e, (how, value, src_line))) = near {
                 self.stats.numbers_found += 1;
                 let key = self.key(r);
@@ -1062,6 +1112,44 @@ impl<'a> Ctx<'a> {
                 } else {
                     Severity::Warn
                 },
+                line,
+                msg,
+                evidence,
+                data,
+            );
+        }
+        if !changed_nums.is_empty() {
+            let mut data = Map::new();
+            data.insert("numbers".into(), json!(changed_nums));
+            data.insert("sentence".into(), json!(sentence));
+            data.insert("changed_text".into(), json!(changed_paths));
+            data.insert("references".into(), json!(keys));
+            if !survivors.is_empty() {
+                data.insert("survivors".into(), Value::Object(survivors.clone()));
+            }
+            let msg = format!(
+                "numbers {} are unverified: they occur only in {}, which {} not match the SHA-256 recorded in the registry",
+                changed_nums.join(", "),
+                match changed_paths.as_slice() {
+                    [one] => format!("text file {one}"),
+                    many => format!("text files {}", many.join(", ")),
+                },
+                if changed_paths.len() == 1 {
+                    "does"
+                } else {
+                    "do"
+                }
+            );
+            let evidence = changed_paths
+                .iter()
+                .map(|p| Evidence {
+                    path: p.to_string(),
+                    locator: "file".into(),
+                })
+                .collect();
+            self.emit(
+                Rule::SourceTextChanged,
+                Severity::Warn,
                 line,
                 msg,
                 evidence,

@@ -64,7 +64,7 @@ rules! {
     SourceTextMissing => "source-text-missing", Warn,
         "A check needs the cited source's text, but the registry lists none or it cannot be read.";
     SourceTextChanged => "source-text-changed", Warn,
-        "A source text file's SHA-256 differs from the hash recorded in the registry.";
+        "A source text file's SHA-256 differs from the registry's hash; quotes and numbers found only there are unverified.";
     NumberNotInSource => "number-not-in-source", Warn,
         "A number in a citing sentence does not occur in any cited source text.";
     DepthInsufficient => "depth-insufficient", Error,

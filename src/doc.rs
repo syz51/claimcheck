@@ -195,6 +195,20 @@ pub fn parse_keys(s: &str) -> Vec<String> {
     out
 }
 
+static NUMBER_INTERVAL: LazyLock<Regex> = LazyLock::new(|| {
+    let n = r"[-\x{2212}]?\d{1,3}(?:,\d{3})+";
+    Regex::new(&format!(r"^\s*{n}(?:\s*,\s+{n})+\s*$")).expect("valid regex")
+});
+
+/// True when a `keys` group is an interval of thousands-formatted numbers,
+/// such as the confidence interval in `[118,900, 188,900]`: every item has
+/// thousands separators, and a comma plus whitespace separates the items.
+/// Citation lists such as `[487,598]` or `[323,579–583,590]` have no space
+/// after their commas, so they stay citations.
+fn is_number_interval(keys: &str) -> bool {
+    NUMBER_INTERVAL.is_match(keys)
+}
+
 fn find_citations(src: &str, patterns: &[CitationPattern]) -> Vec<Citation> {
     let mut found: Vec<Citation> = Vec::new();
     for p in patterns {
@@ -209,6 +223,7 @@ fn find_citations(src: &str, patterns: &[CitationPattern]) -> Vec<Citation> {
             }
             let keys = match (caps.name("key"), caps.name("keys")) {
                 (Some(k), _) => vec![k.as_str().trim().to_string()],
+                (None, Some(k)) if is_number_interval(k.as_str()) => continue,
                 (None, Some(k)) => parse_keys(k.as_str()),
                 (None, None) => continue,
             };
@@ -751,6 +766,63 @@ mod tests {
             .count();
         assert_eq!(marks, 3);
         assert_eq!(d.blocks[0].links, 2);
+    }
+
+    #[test]
+    fn number_intervals_are_not_citations() {
+        // The default `[N]` pattern matches these items, so they reach the interval rule.
+        let d = doc(
+            "| Context tokens per question, mean [95% CI] | 153,900 [118,900, 188,900] | 101,500 [87,700, 115,400] |\n\nAlso [14,500, 90,300].\n",
+        );
+        assert!(d.citations.is_empty(), "{:?}", d.citations);
+        // Signed or zero-led groups never match the default pattern; a looser
+        // custom pattern reaches the rule with them, and its plain keys still cite.
+        let cfg = Config::from_toml(
+            Path::new("/p"),
+            "[claimcheck.citations]\npatterns = ['\\[(?P<keys>[-\\x{2212}\\d][-\\x{2212}\\d, ]*)\\]']\n",
+        )
+        .unwrap();
+        let d = Doc::parse(
+            "A [−90,300, −14,500], [-1,000, 2,000] and [1,234,567, 2,000,000]; cite [0, 12].\n"
+                .to_string(),
+            &cfg.citations,
+            &cfg.reference_list.headings,
+        );
+        let keys: Vec<Vec<String>> = d.citations.iter().map(|c| c.keys.clone()).collect();
+        assert_eq!(keys, [vec!["0".to_string(), "12".to_string()]]);
+        for s in [
+            "118,900, 188,900",
+            "−90,300, −14,500",
+            "-1,000, 2,000",
+            " 1,234,567 , 2,000,000 ",
+        ] {
+            assert!(is_number_interval(s), "{s}");
+        }
+        for s in [
+            "487,598",
+            "118,900",
+            "118,900,188,900",
+            "3, 5-7",
+            "1,234, 56",
+            "12, 34",
+            "1,2345, 6,789",
+        ] {
+            assert!(!is_number_interval(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn citation_lists_with_three_digit_keys_stay_citations() {
+        let d = doc("See [487,598], [180,695], [323,579–583,590], [3, 5-7] and [3; p. 4].\n");
+        let keys: Vec<Vec<String>> = d.citations.iter().map(|c| c.keys.clone()).collect();
+        let want: Vec<Vec<&str>> = vec![
+            vec!["487", "598"],
+            vec!["180", "695"],
+            vec!["323", "579", "580", "581", "582", "583", "590"],
+            vec!["3", "5", "6", "7"],
+            vec!["3"],
+        ];
+        assert_eq!(keys, want);
     }
 
     #[test]

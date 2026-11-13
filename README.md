@@ -189,7 +189,8 @@ Citation patterns run on the raw Markdown, so link syntax such as `[3](reference
 
 - citations inside code spans, code blocks, HTML or front matter;
 - an inline link whose text happens to be a number, as in `[3](https://example.org)`;
-- bracketed intervals that start at zero or below, such as `[0, 1]` or `[-3, 0]`. `[1, 2]` reads as two citations.
+- bracketed intervals that start at zero or below, such as `[0, 1]` or `[-3, 0]`. `[1, 2]` reads as two citations;
+- bracketed intervals of numbers with thousands separators, such as the confidence interval `[118,900, 188,900]`. Each item must have thousands separators, and a comma plus a space must separate the items. This applies to every pattern with a `keys` group. `[487,598]` and `[323,579–583,590]` have no space after their commas, so they stay citations.
 
 A citation placed right after a full stop, as in `… pipeline. [2]` or `… pipeline.[2] Next`, belongs to the sentence it ends. In `[3; 9]` both numbers are keys; text after a semicolon that does not start with a digit, as in `[3; p. 4]`, is a locator.
 

@@ -163,6 +163,51 @@ impl Project {
         }
         out
     }
+
+    /// A `stale-kept-quote` warning for each `[[claimcheck.kept_quote]]`
+    /// entry whose file is in `checked` (as findings show paths) and whose
+    /// index is not in `matched`.
+    pub fn stale_kept_quotes(
+        &self,
+        checked: &[String],
+        matched: &BTreeSet<usize>,
+        order: usize,
+    ) -> Vec<Finding> {
+        let config = self
+            .cfg
+            .config_path
+            .as_ref()
+            .map_or_else(|| "research.toml".to_string(), |p| self.cfg.display_path(p));
+        let mut out = Vec::new();
+        for (i, k) in self.cfg.kept_quotes.iter().enumerate() {
+            if matched.contains(&i) || !checked.contains(&k.file) {
+                continue;
+            }
+            let mut data = Map::new();
+            data.insert("quote".into(), json!(k.quote));
+            data.insert("reason".into(), json!(k.reason));
+            let msg = format!(
+                "kept quotation “{}” matched no unverified quotation in {}: it is verbatim in a cited text now, or no longer quoted beside a citation; remove the entry",
+                quote_excerpt(&k.quote, self.cfg.quotes.excerpt_chars),
+                k.file
+            );
+            push(
+                &self.cfg,
+                &mut out,
+                Rule::StaleKeptQuote,
+                Severity::Warn,
+                k.file.clone(),
+                msg,
+                vec![Evidence {
+                    path: config.clone(),
+                    locator: format!("[[claimcheck.kept_quote]] entry {}", i + 1),
+                }],
+                data,
+                (order, i),
+            );
+        }
+        out
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -204,6 +249,9 @@ pub struct Stats {
     pub numbers_checked: usize,
     pub numbers_found: usize,
     pub claims_classified: usize,
+    /// Indexes into [`Config::kept_quotes`] of the entries that matched an
+    /// unverified quotation.
+    pub kept_quotes: BTreeSet<usize>,
     /// Sentences (or non-prose blocks) with text that cite a reference, or
     /// that are part of a blockquote checked as a cited quotation.
     pub citing: Measure,
@@ -251,6 +299,7 @@ impl Stats {
         self.numbers_checked += o.numbers_checked;
         self.numbers_found += o.numbers_found;
         self.claims_classified += o.claims_classified;
+        self.kept_quotes.extend(o.kept_quotes);
         self.citing.add(o.citing);
         self.uncited.add(o.uncited);
     }
@@ -601,17 +650,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn long_enough(&self, chars: &[(char, u32)]) -> bool {
-        let cfg = &self.p.cfg.quotes;
-        let cjk = chars.iter().filter(|(c, _)| normalize::is_cjk(*c)).count();
-        let text: String = chars
-            .iter()
-            .map(|(c, _)| if normalize::is_cjk(*c) { ' ' } else { *c })
-            .collect();
-        let words = text
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| !w.is_empty())
-            .count();
-        words >= cfg.min_words || (cjk > 0 && cjk >= cfg.min_cjk_chars)
+        self.p.cfg.quotes.long_enough(chars.iter().map(|(c, _)| *c))
     }
 
     // ---- quotations -------------------------------------------------------
@@ -800,6 +839,10 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
+        let kept = self.kept_quote(&quote);
+        if let Some(i) = kept {
+            self.stats.kept_quotes.insert(i);
+        }
         let mut data = Map::new();
         data.insert("quote".into(), json!(shown));
         data.insert(
@@ -904,7 +947,31 @@ impl<'a> Ctx<'a> {
                 ),
             ),
         };
+        let Some(i) = kept else {
+            self.emit(Rule::QuoteNotFound, sev, line, msg, evidence, data);
+            return;
+        };
+        let reason = &self.p.cfg.kept_quotes[i].reason;
+        let msg = format!("{msg}; kept by [[claimcheck.kept_quote]]: {reason}");
+        data.insert("kept_reason".into(), json!(reason));
+        let before = self.out.len();
         self.emit(Rule::QuoteNotFound, sev, line, msg, evidence, data);
+        // After any severity override: a kept quotation is info.
+        if let Some(f) = self.out.get_mut(before) {
+            f.severity = Severity::Info;
+        }
+    }
+
+    /// The index of the `[[claimcheck.kept_quote]]` entry for `quote` in
+    /// this file, compared by skeleton.
+    fn kept_quote(&self, quote: &str) -> Option<usize> {
+        let kept = &self.p.cfg.kept_quotes;
+        if !kept.iter().any(|k| k.file == self.file) {
+            return None;
+        }
+        let skeleton = normalize::skeleton_str(quote);
+        kept.iter()
+            .position(|k| k.file == self.file && k.skeleton == skeleton)
     }
 
     // ---- numbers ----------------------------------------------------------

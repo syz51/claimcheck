@@ -75,6 +75,8 @@ rules! {
         "A paragraph lacks a required evidence label, or uses one outside the vocabulary.";
     ReferenceListMismatch => "reference-list-mismatch", Error,
         "A document's own reference-list entry disagrees with the registry's title, year or first author.";
+    StaleKeptQuote => "stale-kept-quote", Warn,
+        "A [[claimcheck.kept_quote]] entry matches no unverified quotation in its checked file.";
 }
 
 impl Rule {

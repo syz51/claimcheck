@@ -44,6 +44,29 @@ impl Default for QuotesConfig {
     }
 }
 
+impl QuotesConfig {
+    /// Whether quoted text is long enough to be checked as a quotation: at
+    /// least `min_words` words, or `min_cjk_chars` CJK characters.
+    pub fn long_enough(&self, text: impl Iterator<Item = char>) -> bool {
+        let mut cjk = 0;
+        let text: String = text
+            .map(|c| {
+                if crate::normalize::is_cjk(c) {
+                    cjk += 1;
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let words = text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .count();
+        words >= self.min_words || (cjk > 0 && cjk >= self.min_cjk_chars)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NumbersConfig {
@@ -266,6 +289,28 @@ pub struct PaperNotesConfig {
     pub commentary_sections: Vec<String>,
 }
 
+/// One `[[claimcheck.kept_quote]]` entry as written.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeptQuoteToml {
+    file: String,
+    quote: String,
+    reason: String,
+}
+
+/// A quotation known not to quote its cited source, such as text quoted from
+/// the project's own slide beside a citation, with the reason it is kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeptQuote {
+    /// The document, relative to the project root, as findings show it.
+    pub file: String,
+    pub quote: String,
+    pub reason: String,
+    /// [`crate::normalize::skeleton_str`] of `quote`, compared with the
+    /// skeleton of each checked quotation in `file`.
+    pub skeleton: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct CitationsToml {
@@ -287,6 +332,7 @@ struct ClaimcheckToml {
     reference_list: ReferenceListConfig,
     paper_notes: PaperNotesConfig,
     severity: BTreeMap<String, String>,
+    kept_quote: Vec<KeptQuoteToml>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -346,6 +392,7 @@ pub struct Config {
     pub reference_list: ReferenceListConfig,
     pub paper_notes: PaperNotesConfig,
     pub severity: HashMap<Rule, SeverityOverride>,
+    pub kept_quotes: Vec<KeptQuote>,
 }
 
 /// Words that make a following claim hypothetical or normative ("must
@@ -576,6 +623,45 @@ impl Config {
             };
             severity.insert(rule, value);
         }
+        let mut kept_quotes: Vec<KeptQuote> = Vec::new();
+        for (i, k) in cc.kept_quote.into_iter().enumerate() {
+            let at = format!("{where_}: [[claimcheck.kept_quote]] entry {}", i + 1);
+            let relative = !k.file.starts_with('/')
+                && k.file.split('/').all(|seg| !matches!(seg, "" | "." | ".."));
+            if !relative {
+                return Err(Error::new(format!(
+                    "{at}: file `{}` must be a relative path below the project root without `.`, `..` or empty segments",
+                    k.file
+                )));
+            }
+            let skeleton = crate::normalize::skeleton_str(&k.quote);
+            // `check_quote` skips quotations this short, so no entry for one
+            // could ever match.
+            if skeleton.chars().count() < 4 || !cc.quotes.long_enough(k.quote.chars()) {
+                return Err(Error::new(format!(
+                    "{at}: quote is too short to be checked as a quotation (min_words, min_cjk_chars, or 4 letters or digits)"
+                )));
+            }
+            let reason = k.reason.trim();
+            if reason.is_empty() {
+                return Err(Error::new(format!("{at}: reason is empty")));
+            }
+            if kept_quotes
+                .iter()
+                .any(|o| o.file == k.file && o.skeleton == skeleton)
+            {
+                return Err(Error::new(format!(
+                    "{at}: the quote is already kept for {}",
+                    k.file
+                )));
+            }
+            kept_quotes.push(KeptQuote {
+                reason: reason.to_string(),
+                file: k.file,
+                quote: k.quote,
+                skeleton,
+            });
+        }
         if !(0.0..=1.0).contains(&cc.quotes.error_below)
             || !(0.0..=1.0).contains(&cc.reference_list.title_similarity)
         {
@@ -606,6 +692,7 @@ impl Config {
             reference_list: cc.reference_list,
             paper_notes: cc.paper_notes,
             severity,
+            kept_quotes,
         })
     }
 

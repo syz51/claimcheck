@@ -2069,7 +2069,13 @@ fn kept_quote_entries_are_validated() {
             "{file}"
         );
     }
-    assert!(err(&entry("a.md", "“ … ”", "r")).contains("no letters or digits"));
+    // Quotations this short are never checked, so the entry could never match.
+    for quote in ["“ … ”", "RAG", "two words", "a b c"] {
+        assert!(
+            err(&entry("a.md", quote, "r")).contains("too short to be checked"),
+            "{quote}"
+        );
+    }
     assert!(err(&entry("a.md", "some quoted words", "  ")).contains("reason is empty"));
     let twice = format!(
         "{}{}",
@@ -2078,4 +2084,39 @@ fn kept_quote_entries_are_validated() {
     );
     assert!(err(&twice).contains("entry 2: the quote is already kept for a.md"));
     assert!(err("[[claimcheck.kept_quote]]\nfile = \"a.md\"\nquote = \"q q q\"\nreason = \"r\"\nline = 3\n").contains("unknown field"));
+}
+
+#[test]
+fn kept_quote_without_source_text_keeps_its_warning_and_is_not_stale() {
+    let fx = Fixture::new(
+        &[reference("1", Some("full"), &["texts/missing.txt"])],
+        &[],
+        SLIDE_KEPT,
+    );
+    let root = fx.project.cfg.root.clone();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("doc.md"),
+        "Slide 2 cites DPR [1] after “Search and rank source material using the initial query”.\n",
+    )
+    .unwrap();
+    let (f, _) = claimcheck::run(&fx.project, &[root.join("doc.md")]).unwrap();
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::SourceTextMissing, Severity::Warn),
+            (Rule::SourceTextMissing, Severity::Warn),
+        ],
+        "{f:#?}"
+    );
+}
+
+#[test]
+fn off_drops_a_kept_quote_without_making_it_stale() {
+    let toml = format!("[claimcheck.severity]\nquote-not-found = \"off\"\n\n{SLIDE_KEPT}");
+    let fx = kept_fixture(&toml);
+    let root = fx.project.cfg.root.clone();
+    std::fs::write(root.join("doc.md"), SLIDE_DOC).unwrap();
+    let (f, _) = claimcheck::run(&fx.project, &[root.join("doc.md")]).unwrap();
+    assert!(f.is_empty(), "{f:#?}");
 }

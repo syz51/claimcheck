@@ -650,17 +650,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn long_enough(&self, chars: &[(char, u32)]) -> bool {
-        let cfg = &self.p.cfg.quotes;
-        let cjk = chars.iter().filter(|(c, _)| normalize::is_cjk(*c)).count();
-        let text: String = chars
-            .iter()
-            .map(|(c, _)| if normalize::is_cjk(*c) { ' ' } else { *c })
-            .collect();
-        let words = text
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| !w.is_empty())
-            .count();
-        words >= cfg.min_words || (cjk > 0 && cjk >= cfg.min_cjk_chars)
+        self.p.cfg.quotes.long_enough(chars.iter().map(|(c, _)| *c))
     }
 
     // ---- quotations -------------------------------------------------------

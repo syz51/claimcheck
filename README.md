@@ -164,7 +164,7 @@ commentary_sections = []  # headings of the author's own commentary in paper not
 
 `claimcheck rules` and the source (`src/config.rs`) give the full keyword lists. Keyword phrases match whole words, case-insensitively. A keyword within three words after a modal or conditional word does not count. Those words are must, should, could, would, might, may, can, cannot, whether, if and unless. A capitalised "May" is read as the month, unless it opens the sentence with no number after it. A keyword hyphenated to another word, as in "outcome-trained agents", does not count either.
 
-A severity override sets the severity of every finding of the rule, whatever severity the rule would have given it. For example, `quote-not-found = "info"` makes both near misses (warn) and fabricated quotations (error) info, and `depth-insufficient = "error"` makes its info findings errors too. `off` drops every finding of the rule. A [kept quotation](#kept-quotations) stays info under any override.
+A severity override sets the severity of every finding of the rule, whatever severity the rule would have given it. For example, `quote-not-found = "info"` makes both near misses (warn) and fabricated quotations (error) info, and `depth-insufficient = "error"` makes its info findings errors too. `off` drops every finding of the rule. A [kept quotation](#kept-quotations) stays info under any override except `off`, which drops it too.
 
 ## Rules
 
@@ -224,12 +224,12 @@ An ellipsis (`...`, `…`) or an editorial insertion in brackets (`[…]`, `[sic
 Some quoted text beside a citation does not quote the cited source. Examples are the project's own slide text, a search query string or a venue name. Each `quote-not-found` finding on such text needs a reviewed decision. Since 0.13.0, a `[[claimcheck.kept_quote]]` entry records that decision with three fields, all required:
 
 - `file`: the document, relative to the project root, as findings show it. A path that is absolute or has `.`, `..` or empty segments is an error.
-- `quote`: the quoted text. It matches a checked quotation in `file` when both have the same skeleton (see above), so case, punctuation and spacing do not matter.
+- `quote`: the quoted text. It matches a checked quotation in `file` when both have the same skeleton (see above), so case, punctuation and spacing do not matter. A quote too short to be checked (fewer than `min_words` words and `min_cjk_chars` CJK characters, or fewer than 4 letters and digits) is an error, since no quotation could match it.
 - `reason`: why the text is not a quote of the source. It must not be empty.
 
-A matching `quote-not-found` finding becomes info, whatever its severity and any severity override. Its message ends with `; kept by [[claimcheck.kept_quote]]: <reason>`, and `data.kept_reason` holds the reason. The same text in another file, and any other quotation in the same file, is still checked. A quotation whose cited text is missing or changed keeps its `source-text-missing` or `source-text-changed` finding.
+A matching `quote-not-found` finding becomes info, whatever its severity and any severity override other than `off`. Its message ends with `; kept by [[claimcheck.kept_quote]]: <reason>`, and `data.kept_reason` holds the reason. The same text in another file, and any other quotation in the same file, is still checked. A quotation whose cited text is missing or changed keeps its `source-text-missing` or `source-text-changed` finding.
 
-An entry whose file the run checked, but that matched no quotation that was not found verbatim, is a `stale-kept-quote` warning. The text may now be verbatim in a cited source, or no longer quoted beside a citation. The subject is the file; `data` holds `quote` and `reason`; the evidence names `research.toml` with locator `[[claimcheck.kept_quote]] entry <n>`. A run that does not check the file reports nothing for the entry. The same file and quote twice is an error.
+An entry whose file the run checked, but that matched no quotation that was not found verbatim, is a `stale-kept-quote` warning. A match whose cited text is missing or changed counts as a match. The text may now be verbatim in a cited source, or no longer quoted beside a citation. The subject is the file; `data` holds `quote` and `reason`; the evidence names the configuration file that was loaded, such as `research.toml`, with locator `[[claimcheck.kept_quote]] entry <n>`. A run that does not check the file reports nothing for the entry. The same file and quote twice is an error.
 
 ### Numbers
 

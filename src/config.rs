@@ -44,6 +44,29 @@ impl Default for QuotesConfig {
     }
 }
 
+impl QuotesConfig {
+    /// Whether quoted text is long enough to be checked as a quotation: at
+    /// least `min_words` words, or `min_cjk_chars` CJK characters.
+    pub fn long_enough(&self, text: impl Iterator<Item = char>) -> bool {
+        let mut cjk = 0;
+        let text: String = text
+            .map(|c| {
+                if crate::normalize::is_cjk(c) {
+                    cjk += 1;
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let words = text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .count();
+        words >= self.min_words || (cjk > 0 && cjk >= self.min_cjk_chars)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NumbersConfig {
@@ -612,8 +635,12 @@ impl Config {
                 )));
             }
             let skeleton = crate::normalize::skeleton_str(&k.quote);
-            if skeleton.is_empty() {
-                return Err(Error::new(format!("{at}: quote has no letters or digits")));
+            // `check_quote` skips quotations this short, so no entry for one
+            // could ever match.
+            if skeleton.chars().count() < 4 || !cc.quotes.long_enough(k.quote.chars()) {
+                return Err(Error::new(format!(
+                    "{at}: quote is too short to be checked as a quotation (min_words, min_cjk_chars, or 4 letters or digits)"
+                )));
             }
             let reason = k.reason.trim();
             if reason.is_empty() {

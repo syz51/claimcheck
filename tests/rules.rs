@@ -107,6 +107,38 @@ fn unresolved_duplicate_and_label_mismatch() {
 }
 
 #[test]
+fn confidence_intervals_with_thousands_separators_are_not_citations() {
+    // The masters row that read `[118,900, 188,900]` as keys 118, 900, 188 and 900.
+    // Keys 87 and 400 are real references here, as in masters: before, they resolved silently.
+    let fx = Fixture::new(
+        &[
+            reference("87", Some("full"), &["texts/87.txt"]),
+            reference("400", Some("full"), &["texts/400.txt"]),
+        ],
+        &[("texts/87.txt", SOURCE), ("texts/400.txt", SOURCE)],
+        "",
+    );
+    let f = fx.check(
+        "| Context tokens per question, mean [95% CI] | 153,900 [118,900, 188,900] | 101,500 [87,700, 115,400] | −52,400 [−90,300, −14,500] |\n",
+    );
+    let bad: Vec<&Finding> = f
+        .iter()
+        .filter(|f| matches!(f.rule, Rule::CitationUnresolved | Rule::SourceTextMissing))
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+    // A real citation list with three-digit keys still resolves and still flags a missing key.
+    let f = fx.check("Both agree [87,400] but not [87,900].\n");
+    assert_eq!(
+        rules(&f)
+            .iter()
+            .filter(|(r, _)| *r == Rule::CitationUnresolved)
+            .count(),
+        1,
+        "{f:#?}"
+    );
+}
+
+#[test]
 fn exact_quote_survives_pdf_artifacts() {
     let fx = basic();
     let f = fx.check("The authors study “financial evidence retrieval for annual reports” [1].\n");

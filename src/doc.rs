@@ -770,10 +770,26 @@ mod tests {
 
     #[test]
     fn number_intervals_are_not_citations() {
+        // The default `[N]` pattern matches these items, so they reach the interval rule.
         let d = doc(
-            "| Context tokens per question, mean [95% CI] | 153,900 [118,900, 188,900] | 101,500 [87,700, 115,400] | −52,400 [−90,300, −14,500] |\n\nAlso [14,500, 90,300] and [1,234,567, 2,000,000].\n",
+            "| Context tokens per question, mean [95% CI] | 153,900 [118,900, 188,900] | 101,500 [87,700, 115,400] |\n\nAlso [14,500, 90,300].\n",
         );
         assert!(d.citations.is_empty(), "{:?}", d.citations);
+        // Signed or zero-led groups never match the default pattern; a looser
+        // custom pattern reaches the rule with them, and its plain keys still cite.
+        let cfg = Config::from_toml(
+            Path::new("/p"),
+            "[claimcheck.citations]\npatterns = ['\\[(?P<keys>[-\\x{2212}\\d][-\\x{2212}\\d, ]*)\\]']\n",
+        )
+        .unwrap();
+        let d = Doc::parse(
+            "A [−90,300, −14,500], [-1,000, 2,000] and [1,234,567, 2,000,000]; cite [0, 12].\n"
+                .to_string(),
+            &cfg.citations,
+            &cfg.reference_list.headings,
+        );
+        let keys: Vec<Vec<String>> = d.citations.iter().map(|c| c.keys.clone()).collect();
+        assert_eq!(keys, [vec!["0".to_string(), "12".to_string()]]);
         for s in [
             "118,900, 188,900",
             "−90,300, −14,500",

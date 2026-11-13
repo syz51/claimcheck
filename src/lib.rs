@@ -218,5 +218,7 @@ pub fn run(project: &Project, files: &[PathBuf]) -> Result<(Vec<Finding>, Stats)
         stats.add(st);
     }
     findings.extend(project.text_findings(files.len()));
+    let checked: Vec<String> = files.iter().map(|f| project.cfg.display_path(f)).collect();
+    findings.extend(project.stale_kept_quotes(&checked, &stats.kept_quotes, files.len() + 1));
     Ok((findings, stats))
 }

@@ -1962,3 +1962,120 @@ fn index_names_and_short_addresses_are_not_numbers() {
         ["12%"]
     );
 }
+
+fn kept_fixture(entries: &str) -> Fixture {
+    Fixture::new(
+        &[reference("1", Some("full"), &["texts/1.txt"])],
+        &[("texts/1.txt", SOURCE)],
+        entries,
+    )
+}
+
+const SLIDE_DOC: &str = "Slide 2 cites DPR [1] after “Search and rank source material using the initial query”.\n\nThey claim \"graph neural networks solve every retrieval task\" [1].\n";
+
+const SLIDE_KEPT: &str = "[[claimcheck.kept_quote]]\nfile = \"doc.md\"\nquote = \"Search and rank source material using the initial query\"\nreason = \"slide text, not a quote of the cited paper\"\n";
+
+#[test]
+fn kept_quote_is_info_with_its_reason() {
+    let fx = kept_fixture(SLIDE_KEPT);
+    let f = fx.check(SLIDE_DOC);
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::QuoteNotFound, Severity::Info),
+            (Rule::QuoteNotFound, Severity::Error),
+        ]
+    );
+    assert!(
+        f[0].message.ends_with(
+            "; kept by [[claimcheck.kept_quote]]: slide text, not a quote of the cited paper"
+        ),
+        "{}",
+        f[0].message
+    );
+    assert_eq!(
+        f[0].data["kept_reason"],
+        "slide text, not a quote of the cited paper"
+    );
+    // The same quotation in another file is still checked.
+    let other = check_document(&fx.project, "other.md", SLIDE_DOC.to_string(), 0).0;
+    assert_eq!(
+        rules(&other),
+        [
+            (Rule::QuoteNotFound, Severity::Error),
+            (Rule::QuoteNotFound, Severity::Error),
+        ]
+    );
+}
+
+#[test]
+fn kept_quote_matches_by_skeleton_and_beats_a_severity_override() {
+    let toml = "[claimcheck.severity]\nquote-not-found = \"error\"\n\n[[claimcheck.kept_quote]]\nfile = \"doc.md\"\nquote = \"search and rank  source-material, using the INITIAL query\"\nreason = \"slide text\"\n";
+    let fx = kept_fixture(toml);
+    let f = fx.check(SLIDE_DOC);
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::QuoteNotFound, Severity::Info),
+            (Rule::QuoteNotFound, Severity::Error),
+        ]
+    );
+}
+
+#[test]
+fn unused_kept_quote_in_a_checked_file_is_stale() {
+    let toml = format!(
+        "{SLIDE_KEPT}\n[[claimcheck.kept_quote]]\nfile = \"doc.md\"\nquote = \"financial evidence retrieval for annual reports\"\nreason = \"was a paraphrase\"\n\n[[claimcheck.kept_quote]]\nfile = \"unchecked.md\"\nquote = \"anything at all here\"\nreason = \"not in this run\"\n"
+    );
+    let fx = kept_fixture(&toml);
+    let root = fx.project.cfg.root.clone();
+    let doc = format!(
+        "{SLIDE_DOC}\nThe authors study “financial evidence retrieval for annual reports” [1].\n"
+    );
+    std::fs::write(root.join("doc.md"), doc).unwrap();
+    let (f, _) = claimcheck::run(&fx.project, &[root.join("doc.md")]).unwrap();
+    assert_eq!(
+        rules(&f),
+        [
+            (Rule::QuoteNotFound, Severity::Info),
+            (Rule::QuoteNotFound, Severity::Error),
+            (Rule::StaleKeptQuote, Severity::Warn),
+        ]
+    );
+    let stale = &f[2];
+    assert_eq!(stale.subject, "doc.md");
+    assert_eq!(stale.data["reason"], "was a paraphrase");
+    assert_eq!(
+        stale.evidence[0].locator,
+        "[[claimcheck.kept_quote]] entry 2"
+    );
+}
+
+#[test]
+fn kept_quote_entries_are_validated() {
+    let entry = |file: &str, quote: &str, reason: &str| {
+        format!(
+            "[[claimcheck.kept_quote]]\nfile = \"{file}\"\nquote = \"{quote}\"\nreason = \"{reason}\"\n"
+        )
+    };
+    let err = |toml: &str| {
+        Config::from_toml(Path::new("/p"), toml)
+            .unwrap_err()
+            .to_string()
+    };
+    for file in ["", "/abs.md", "../up.md", "docs//a.md", "./a.md"] {
+        assert!(
+            err(&entry(file, "some quoted words", "r")).contains("must be a relative path"),
+            "{file}"
+        );
+    }
+    assert!(err(&entry("a.md", "“ … ”", "r")).contains("no letters or digits"));
+    assert!(err(&entry("a.md", "some quoted words", "  ")).contains("reason is empty"));
+    let twice = format!(
+        "{}{}",
+        entry("a.md", "Some quoted words", "r"),
+        entry("a.md", "some quoted, words", "s")
+    );
+    assert!(err(&twice).contains("entry 2: the quote is already kept for a.md"));
+    assert!(err("[[claimcheck.kept_quote]]\nfile = \"a.md\"\nquote = \"q q q\"\nreason = \"r\"\nline = 3\n").contains("unknown field"));
+}

@@ -13,6 +13,7 @@ use crate::matcher::{self, Approx};
 use crate::normalize::{self, NChar};
 use crate::numbers::{self, NearMatch, NumTok};
 use crate::registry::{Depth, Registry};
+use crate::script;
 use crate::source::{IndexedText, TextEntry, hex};
 
 /// Registry, configuration and the shared source-text cache for one run.
@@ -916,6 +917,74 @@ impl<'a> Ctx<'a> {
             );
             return;
         }
+        // Not verbatim, but the same text in the other Chinese script. It
+        // comes after the missing texts: one of those may hold the quotation.
+        let script_hit = segments
+            .iter()
+            .flatten()
+            .any(|&c| normalize::is_cjk(c))
+            .then(|| {
+                refs.iter().find_map(|&r| {
+                    self.p
+                        .texts_of(r)
+                        .into_iter()
+                        .filter(|(entry, _)| !entry.changed())
+                        .find_map(|(entry, text)| {
+                            let hit = script_match(&text, &segments)?;
+                            Some((entry, text, hit, self.key(r)))
+                        })
+                })
+            })
+            .flatten();
+        if let Some((entry, text, hit, key)) = script_hit {
+            let (s, e) = text.skel_span(hit.start, hit.end);
+            let src_line = text.line_of(s);
+            let excerpt = text.excerpt(s, e, self.p.cfg.quotes.excerpt_chars);
+            data.remove("similarity");
+            data.remove("cuts_token");
+            data.insert("script_only".into(), json!(true));
+            data.insert(
+                "script_differences".into(),
+                json!(
+                    hit.pairs
+                        .iter()
+                        .map(|(q, s)| json!({"quote": q, "source": s}))
+                        .collect::<Vec<_>>()
+                ),
+            );
+            data.insert("script_difference_count".into(), json!(hit.count));
+            data.insert("best_match".into(), json!({"reference": key, "path": entry.display, "line": src_line, "excerpt": excerpt}));
+            let shown_pairs: Vec<String> = hit
+                .pairs
+                .iter()
+                .take(5)
+                .map(|(q, s)| format!("{q} for {s}"))
+                .collect();
+            let msg = format!(
+                "quoted text differs from the source text of reference {key} only in script (traditional or simplified characters): {} of its characters, {}{}",
+                hit.count,
+                shown_pairs.join(", "),
+                if hit.pairs.len() > shown_pairs.len() {
+                    ", …"
+                } else {
+                    ""
+                }
+            );
+            let evidence = vec![Evidence {
+                path: entry.display.clone(),
+                locator: format!("line {src_line}, same text in the other script"),
+            }];
+            self.emit_quote(
+                Rule::QuoteScriptOnly,
+                Severity::Warn,
+                line,
+                msg,
+                evidence,
+                data,
+                kept,
+            );
+            return;
+        }
         let keys: Vec<&str> = refs.iter().map(|&r| self.key(r)).collect();
         let (sev, msg) = match &best {
             Some(b) if b.hit.similarity >= self.p.cfg.quotes.error_below => (
@@ -947,15 +1016,31 @@ impl<'a> Ctx<'a> {
                 ),
             ),
         };
+        self.emit_quote(Rule::QuoteNotFound, sev, line, msg, evidence, data, kept);
+    }
+
+    /// Emits a finding on a quotation. A `[[claimcheck.kept_quote]]` entry
+    /// makes it info.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_quote(
+        &mut self,
+        rule: Rule,
+        sev: Severity,
+        line: usize,
+        msg: String,
+        evidence: Vec<Evidence>,
+        mut data: Map<String, Value>,
+        kept: Option<usize>,
+    ) {
         let Some(i) = kept else {
-            self.emit(Rule::QuoteNotFound, sev, line, msg, evidence, data);
+            self.emit(rule, sev, line, msg, evidence, data);
             return;
         };
         let reason = &self.p.cfg.kept_quotes[i].reason;
         let msg = format!("{msg}; kept by [[claimcheck.kept_quote]]: {reason}");
         data.insert("kept_reason".into(), json!(reason));
         let before = self.out.len();
-        self.emit(Rule::QuoteNotFound, sev, line, msg, evidence, data);
+        self.emit(rule, sev, line, msg, evidence, data);
         // After any severity override: a kept quotation is info.
         if let Some(f) = self.out.get_mut(before) {
             f.severity = Severity::Info;
@@ -1765,6 +1850,60 @@ fn unit_offset(block: &Block, u: &Unit) -> usize {
 
 fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
+}
+
+/// A place where a quotation occurs in the other Chinese script.
+struct ScriptHit {
+    /// Skeleton span from the first segment's start to the last one's end.
+    start: usize,
+    end: usize,
+    /// Characters of the quotation that differ from the source.
+    count: usize,
+    /// Each distinct (quotation character, source character), in order.
+    pairs: Vec<(char, char)>,
+}
+
+/// Finds the segments in order in `text`, where a character also matches its
+/// form in the other script ([`script::script_of`]). `None` when a segment
+/// does not occur so, when nothing differs, or when some characters of the
+/// quotation are the simplified forms and others the traditional ones.
+fn script_match(text: &IndexedText, segments: &[Vec<char>]) -> Option<ScriptHit> {
+    let same = |q: char, s: char| q == s || script::script_of(q, s).is_some();
+    let mut pos = 0;
+    let mut start = None;
+    let mut count = 0;
+    let mut pairs: Vec<(char, char)> = Vec::new();
+    // The script of the quotation, once a pair has decided it.
+    let mut quote_script = None;
+    for seg in segments {
+        let last = text.skel.len().checked_sub(seg.len())?;
+        let p = (pos..=last).find(|&p| {
+            seg.iter().zip(&text.skel[p..]).all(|(&q, &s)| same(q, s))
+                && text.bounded(p, p + seg.len())
+        })?;
+        for (&q, &s) in seg.iter().zip(&text.skel[p..]) {
+            if q == s {
+                continue;
+            }
+            // A quotation in one script has every pair in one direction.
+            let script = script::script_of(q, s)?;
+            if *quote_script.get_or_insert(script) != script {
+                return None;
+            }
+            count += 1;
+            if !pairs.contains(&(q, s)) {
+                pairs.push((q, s));
+            }
+        }
+        start.get_or_insert(p);
+        pos = p + seg.len();
+    }
+    (count > 0).then_some(ScriptHit {
+        start: start?,
+        end: pos,
+        count,
+        pairs,
+    })
 }
 
 /// Approximate match of a segment; long segments are scored by their worst chunk.

@@ -61,6 +61,8 @@ rules! {
         "A citation's visible number differs from the key in its link target.";
     QuoteNotFound => "quote-not-found", Error,
         "Quoted text attached to a citation does not occur in the cited source text.";
+    QuoteScriptOnly => "quote-script-only", Warn,
+        "Quoted text matches the cited source text only after traditional or simplified Chinese characters are converted.";
     SourceTextMissing => "source-text-missing", Warn,
         "A check needs the cited source's text, but the registry lists none or it cannot be read.";
     SourceTextChanged => "source-text-changed", Warn,

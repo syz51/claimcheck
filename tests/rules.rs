@@ -2264,6 +2264,14 @@ fn cjk_comparative_keyword_matches_without_spaces() {
             .iter()
             .any(|f| f.rule == Rule::UncitedClaim)
     );
+    // A CJK character is a boundary of an English keyword.
+    let f = fx.check("甲本more accurate than乙本。\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+    assert!(
+        f[0].message.contains("(\"more accurate than\")"),
+        "{}",
+        f[0].message
+    );
     // English keywords of the same list still match whole words only.
     let f = fx.check("Edition A is more accurate than edition B.\n");
     assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);

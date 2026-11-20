@@ -194,13 +194,18 @@ pub fn words(chars: &[char]) -> Vec<(usize, usize, String)> {
 /// True for characters of scripts written without spaces between words.
 pub fn is_cjk(c: char) -> bool {
     matches!(c as u32,
-        0x3040..=0x30FF   // Hiragana, Katakana
+        0x3005..=0x3007   // 々, 〆, 〇
+        | 0x3040..=0x30FF // Hiragana, Katakana
         | 0x3400..=0x4DBF // CJK extension A
         | 0x4E00..=0x9FFF // CJK unified ideographs
         | 0xF900..=0xFAFF // compatibility ideographs
         | 0xAC00..=0xD7AF // Hangul syllables
-        | 0x20000..=0x2FA1F)
+        | 0xFF66..=0xFF9F // half-width Katakana
+        | 0x20000..=0x323AF) // CJK extensions B to H, compatibility supplement
 }
+
+/// The characters of [`is_cjk`] as the inside of a regex character class.
+pub const CJK_CLASS: &str = r"\x{3005}-\x{3007}\x{3040}-\x{30FF}\x{3400}-\x{4DBF}\x{4E00}-\x{9FFF}\x{F900}-\x{FAFF}\x{AC00}-\x{D7AF}\x{FF66}-\x{FF9F}\x{20000}-\x{323AF}";
 
 /// Collapses whitespace and truncates to `max` characters for display.
 pub fn excerpt(text: &str, max: usize) -> String {
@@ -245,6 +250,14 @@ pub fn sentence_key(text: &str) -> Option<[u8; 8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cjk_class_is_is_cjk() {
+        let re = regex::Regex::new(&format!("^[{CJK_CLASS}]$")).unwrap();
+        for c in (0..=0x3FFFFu32).filter_map(char::from_u32) {
+            assert_eq!(re.is_match(c.encode_utf8(&mut [0; 4])), is_cjk(c), "{c:?}");
+        }
+    }
 
     #[test]
     fn nfkc_ligatures_and_full_width() {

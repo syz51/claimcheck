@@ -174,6 +174,7 @@ A severity override sets the severity of every finding of the rule, whatever sev
 | `citation-duplicate` | warn | A citation uses a key whose registry entry duplicates another key. The message names the surviving key, or says that the `duplicate_of` chain is broken or cycles. |
 | `citation-label-mismatch` | error | A citation's visible number differs from the key in its link, as in `[3](references.md#reference-4)`. |
 | `quote-not-found` | error | Quoted text attached to a citation does not occur in the cited source text. Below `error_below` similarity it is an error; between that and verbatim, a warning. Both report the closest match with its line and similarity. |
+| `quote-script-only` | warn | Since 0.16.0: quoted text is not verbatim in the cited source text, but it is the same text in the other Chinese script (traditional or simplified characters). The message names the characters that differ. See [Chinese script](#chinese-script). |
 | `source-text-missing` | warn | A quotation or number needs a cited source's text, but the registry lists none or the file cannot be read. The check is undecided, never "supported". Since 0.12.0, the finding on a document line adds to its `evidence` each text path the registry gives for those references, once, with locator `missing text of reference <key>`, after a quotation's best match in another cited text. A duplicate gives its survivor's paths, and a reference that lists no text adds none. The finding for an unreadable file, under the reference key, names the file with locator `file`. |
 | `source-text-changed` | warn | A source text file's SHA-256 differs from the registry's `sha256`. It is reported once for the file, under the reference key. A quotation or number that occurs only in such a file is unverified, never "supported": it gets its own finding on the document line, with the file in `data.changed_text`. A match in another cited text whose hash agrees still verifies it. |
 | `number-not-in-source` | warn | A number in a citing sentence occurs in none of the cited source texts. Up to `nearest` numbers near the sentence's words in the source are reported. It is info when `numbers.links_are_evidence` is set and the sentence holds a non-citation link, and when the number matches a nearby source number only as a rounding or a percentage (see Numbers). |
@@ -228,9 +229,30 @@ Some quoted text beside a citation does not quote the cited source. Examples are
 - `quote`: the quoted text. It matches a checked quotation in `file` when both have the same skeleton (see above), so case, punctuation and spacing do not matter. A quote too short to be checked (fewer than `min_words` words and `min_cjk_chars` CJK characters, or fewer than 4 letters and digits) is an error, since no quotation could match it.
 - `reason`: why the text is not a quote of the source. It must not be empty.
 
-A matching `quote-not-found` finding becomes info, whatever its severity and any severity override other than `off`. Its message ends with `; kept by [[claimcheck.kept_quote]]: <reason>`, and `data.kept_reason` holds the reason. The same text in another file, and any other quotation in the same file, is still checked. A quotation whose cited text is missing or changed keeps its `source-text-missing` or `source-text-changed` finding.
+A matching `quote-not-found` finding (or, since 0.16.0, `quote-script-only` finding) becomes info, whatever its severity and any severity override other than `off`. Its message ends with `; kept by [[claimcheck.kept_quote]]: <reason>`, and `data.kept_reason` holds the reason. The same text in another file, and any other quotation in the same file, is still checked. A quotation whose cited text is missing or changed keeps its `source-text-missing` or `source-text-changed` finding.
 
 An entry whose file the run checked, but that matched no quotation that was not found verbatim, is a `stale-kept-quote` warning. A match whose cited text is missing or changed counts as a match. The text may now be verbatim in a cited source, or no longer quoted beside a citation. The subject is the file; `data` holds `quote` and `reason`; the evidence names the configuration file that was loaded, such as `research.toml`, with locator `[[claimcheck.kept_quote]] entry <n>`. A run that does not check the file reports nothing for the entry. The same file and quote twice is an error.
+
+### Chinese script
+
+Since 0.16.0, a quotation that is not verbatim is compared again with the cited texts, character by character. A character of the quotation matches the same character, or the character that is its traditional or simplified form. When every part of the quotation occurs so, in order, the finding is `quote-script-only` instead of `quote-not-found`:
+
+```text
+notes.md:3: warn[quote-script-only] quoted text differs from the source text of reference lunyu only in script (traditional or simplified characters): 3 of its characters, 学 for 學, 时 for 時, 习 for 習
+```
+
+The message shows up to five distinct character pairs. `data` holds `script_only: true`, `script_difference_count` (the number of characters of the quotation that differ), `script_differences` (each distinct pair as `{"quote": "学", "source": "學"}`, in order) and `best_match` (reference, path, line and excerpt).
+
+The check is strict, so that a wrong character keeps its `quote-not-found` finding:
+
+- The pair must be in the table as a traditional character and one of its simplified forms. Two traditional characters with one simplified form, such as `發` and `髮`, do not match each other.
+- Variant forms of one script, such as `逺` for `遠` or `爲` for `為`, do not match.
+- Every other character must be equal, and no character may be missing or added.
+- Only text files whose SHA-256 agrees with the registry are searched.
+
+The default severity is warn, because the quotation does not keep the characters of the cited edition. A project that quotes in the other script on purpose sets `quote-script-only = "info"` or `"off"` in `[claimcheck.severity]`, and a project that must keep the characters sets `"error"`. A [kept quotation](#kept-quotations) entry makes one such finding info. A quotation without a CJK character never gets this check.
+
+The table is `TSCharacters.txt` of [OpenCC](https://github.com/BYVoid/OpenCC) (Apache-2.0), in `data/opencc/`, built into the binary.
 
 ### Numbers
 

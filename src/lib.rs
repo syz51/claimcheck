@@ -18,6 +18,7 @@ pub mod matcher;
 pub mod normalize;
 pub mod numbers;
 pub mod registry;
+pub mod script;
 pub mod source;
 
 use check::{Project, Stats};

@@ -247,10 +247,14 @@ The check is strict, so that a wrong character keeps its `quote-not-found` findi
 
 - The pair must be in the table as a traditional character and one of its simplified forms. Two traditional characters with one simplified form, such as `發` and `髮`, do not match each other.
 - Variant forms of one script, such as `逺` for `遠` or `爲` for `為`, do not match.
-- Every other character must be equal, and no character may be missing or added.
+- Every other letter and digit must be equal, and none may be missing or added. As for a verbatim match, punctuation, spacing and case do not count.
+- Every differing character of one quotation must go the same way: all simplified forms of the source's characters, or all traditional ones.
+- A quotation with a reference whose text is missing keeps its `source-text-missing` finding.
 - Only text files whose SHA-256 agrees with the registry are searched.
 
 The default severity is warn, because the quotation does not keep the characters of the cited edition. A project that quotes in the other script on purpose sets `quote-script-only = "info"` or `"off"` in `[claimcheck.severity]`, and a project that must keep the characters sets `"error"`. A [kept quotation](#kept-quotations) entry makes one such finding info. A quotation without a CJK character never gets this check.
+
+The table maps single characters, and some characters are valid in both scripts. `干` is the simplified form of `乾` and of `幹`, and also a traditional character of its own. So a traditional `乾涉` for a source's `干涉` is read as a script difference, although it is a wrong character. Review a `quote-script-only` finding before lowering its severity.
 
 The table is `TSCharacters.txt` of [OpenCC](https://github.com/BYVoid/OpenCC) (Apache-2.0), in `data/opencc/`, built into the binary.
 

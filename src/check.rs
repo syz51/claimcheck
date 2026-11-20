@@ -877,7 +877,48 @@ impl<'a> Ctx<'a> {
         if !survivors.is_empty() {
             data.insert("survivors".into(), Value::Object(survivors));
         }
-        // Not verbatim, but the same text in the other Chinese script.
+        let mut evidence = Vec::new();
+        if let Some(BestMatch {
+            entry,
+            text,
+            hit,
+            key,
+            cuts,
+        }) = &best
+        {
+            let sim = &hit.similarity;
+            if *cuts {
+                data.insert("cuts_token".into(), json!(true));
+            }
+            let (s, e) = text.skel_span(hit.start, hit.end);
+            let src_line = text.line_of(s);
+            let excerpt = text.excerpt(s, e, self.p.cfg.quotes.excerpt_chars);
+            data.insert("similarity".into(), json!(round3(*sim)));
+            data.insert("best_match".into(), json!({"reference": key, "path": entry.display, "line": src_line, "excerpt": excerpt}));
+            evidence.push(Evidence {
+                path: entry.display.clone(),
+                locator: format!("best match line {src_line}, similarity {:.2}", sim),
+            });
+        }
+        if !missing.is_empty() {
+            data.insert("missing_text".into(), json!(missing));
+            evidence.extend(self.missing_text_evidence(refs));
+            let msg = format!(
+                "quotation cannot be verified: {} no source text",
+                refs_have(&missing)
+            );
+            self.emit(
+                Rule::SourceTextMissing,
+                Severity::Warn,
+                line,
+                msg,
+                evidence,
+                data,
+            );
+            return;
+        }
+        // Not verbatim, but the same text in the other Chinese script. It
+        // comes after the missing texts: one of those may hold the quotation.
         let script_hit = segments
             .iter()
             .flatten()
@@ -899,6 +940,8 @@ impl<'a> Ctx<'a> {
             let (s, e) = text.skel_span(hit.start, hit.end);
             let src_line = text.line_of(s);
             let excerpt = text.excerpt(s, e, self.p.cfg.quotes.excerpt_chars);
+            data.remove("similarity");
+            data.remove("cuts_token");
             data.insert("script_only".into(), json!(true));
             data.insert(
                 "script_differences".into(),
@@ -939,46 +982,6 @@ impl<'a> Ctx<'a> {
                 evidence,
                 data,
                 kept,
-            );
-            return;
-        }
-        let mut evidence = Vec::new();
-        if let Some(BestMatch {
-            entry,
-            text,
-            hit,
-            key,
-            cuts,
-        }) = &best
-        {
-            let sim = &hit.similarity;
-            if *cuts {
-                data.insert("cuts_token".into(), json!(true));
-            }
-            let (s, e) = text.skel_span(hit.start, hit.end);
-            let src_line = text.line_of(s);
-            let excerpt = text.excerpt(s, e, self.p.cfg.quotes.excerpt_chars);
-            data.insert("similarity".into(), json!(round3(*sim)));
-            data.insert("best_match".into(), json!({"reference": key, "path": entry.display, "line": src_line, "excerpt": excerpt}));
-            evidence.push(Evidence {
-                path: entry.display.clone(),
-                locator: format!("best match line {src_line}, similarity {:.2}", sim),
-            });
-        }
-        if !missing.is_empty() {
-            data.insert("missing_text".into(), json!(missing));
-            evidence.extend(self.missing_text_evidence(refs));
-            let msg = format!(
-                "quotation cannot be verified: {} no source text",
-                refs_have(&missing)
-            );
-            self.emit(
-                Rule::SourceTextMissing,
-                Severity::Warn,
-                line,
-                msg,
-                evidence,
-                data,
             );
             return;
         }
@@ -1861,14 +1864,17 @@ struct ScriptHit {
 }
 
 /// Finds the segments in order in `text`, where a character also matches its
-/// form in the other script ([`script::differ_in_script`]). `None` when a
-/// segment does not occur so, or when nothing differs.
+/// form in the other script ([`script::script_of`]). `None` when a segment
+/// does not occur so, when nothing differs, or when some characters of the
+/// quotation are the simplified forms and others the traditional ones.
 fn script_match(text: &IndexedText, segments: &[Vec<char>]) -> Option<ScriptHit> {
-    let same = |q: char, s: char| q == s || script::differ_in_script(q, s);
+    let same = |q: char, s: char| q == s || script::script_of(q, s).is_some();
     let mut pos = 0;
     let mut start = None;
     let mut count = 0;
     let mut pairs: Vec<(char, char)> = Vec::new();
+    // The script of the quotation, once a pair has decided it.
+    let mut quote_script = None;
     for seg in segments {
         let last = text.skel.len().checked_sub(seg.len())?;
         let p = (pos..=last).find(|&p| {
@@ -1876,11 +1882,17 @@ fn script_match(text: &IndexedText, segments: &[Vec<char>]) -> Option<ScriptHit>
                 && text.bounded(p, p + seg.len())
         })?;
         for (&q, &s) in seg.iter().zip(&text.skel[p..]) {
-            if q != s {
-                count += 1;
-                if !pairs.contains(&(q, s)) {
-                    pairs.push((q, s));
-                }
+            if q == s {
+                continue;
+            }
+            // A quotation in one script has every pair in one direction.
+            let script = script::script_of(q, s)?;
+            if *quote_script.get_or_insert(script) != script {
+                return None;
+            }
+            count += 1;
+            if !pairs.contains(&(q, s)) {
+                pairs.push((q, s));
             }
         }
         start.get_or_insert(p);

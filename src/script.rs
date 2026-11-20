@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use crate::normalize;
+
 static SIMPLIFIED: LazyLock<HashMap<char, Vec<char>>> = LazyLock::new(|| {
     include_str!("../data/opencc/TSCharacters.txt")
         .lines()
@@ -33,13 +35,30 @@ static SIMPLIFIED: LazyLock<HashMap<char, Vec<char>>> = LazyLock::new(|| {
         .collect()
 });
 
-/// True when `a` and `b` are distinct characters and one is a simplified
-/// form of the other. Two traditional characters that share a simplified
-/// form (`發` and `髮`) are not such a pair, and neither are variant forms
-/// of one script (`爲` and `為`).
-pub fn differ_in_script(a: char, b: char) -> bool {
+/// The script of a character of a quotation, against the source character.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Script {
+    Simplified,
+    Traditional,
+}
+
+/// The script of `quote` when it and `source` are distinct characters and one
+/// is a simplified form of the other; `None` otherwise. Two traditional
+/// characters that share a simplified form (`發` and `髮`) are not such a
+/// pair, and neither are variant forms of one script (`爲` and `為`).
+pub fn script_of(quote: char, source: char) -> Option<Script> {
+    // Most pairs of a search are not two CJK characters: no table lookup.
+    if quote == source || !normalize::is_cjk(quote) || !normalize::is_cjk(source) {
+        return None;
+    }
     let simplifies = |t: char, s: char| SIMPLIFIED.get(&t).is_some_and(|f| f.contains(&s));
-    a != b && (simplifies(a, b) || simplifies(b, a))
+    if simplifies(source, quote) {
+        Some(Script::Simplified)
+    } else if simplifies(quote, source) {
+        Some(Script::Traditional)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -49,14 +68,19 @@ mod tests {
     #[test]
     fn pairs() {
         assert!(SIMPLIFIED.len() > 4000);
-        assert!(differ_in_script('學', '学'));
-        assert!(differ_in_script('学', '學'));
+        // Every character of the table is one `is_cjk` knows.
+        for (k, forms) in SIMPLIFIED.iter() {
+            assert!(normalize::is_cjk(*k), "{k}");
+            assert!(forms.iter().all(|f| normalize::is_cjk(*f)), "{k}");
+        }
+        assert_eq!(script_of('学', '學'), Some(Script::Simplified));
+        assert_eq!(script_of('學', '学'), Some(Script::Traditional));
         // A second simplified form of the table.
-        assert!(differ_in_script('乾', '干'));
-        assert!(!differ_in_script('學', '學'));
-        assert!(!differ_in_script('發', '髮'));
-        assert!(!differ_in_script('爲', '為'));
-        assert!(!differ_in_script('悦', '說'));
-        assert!(!differ_in_script('a', 'b'));
+        assert_eq!(script_of('干', '乾'), Some(Script::Simplified));
+        assert_eq!(script_of('學', '學'), None);
+        assert_eq!(script_of('發', '髮'), None);
+        assert_eq!(script_of('爲', '為'), None);
+        assert_eq!(script_of('悦', '說'), None);
+        assert_eq!(script_of('a', 'b'), None);
     }
 }

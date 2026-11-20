@@ -2411,3 +2411,57 @@ fn script_check_leaves_other_text_alone() {
             .is_empty()
     );
 }
+
+#[test]
+fn script_check_keeps_missing_and_changed_text_findings() {
+    let mut changed = reference("old", Some("full"), &["texts/old.txt"]);
+    changed["texts"][0]["sha256"] = json!("00");
+    let fx = Fixture::new(
+        &[
+            reference("lunyu", Some("full"), &["texts/lunyu.txt"]),
+            reference("none", Some("full"), &[]),
+            changed,
+        ],
+        &[
+            ("texts/lunyu.txt", "子曰：學而時習之，不亦悦乎？\n"),
+            ("texts/old.txt", "子曰：學而時習之，不亦悦乎？\n"),
+        ],
+        "",
+    );
+    // The reference without a text may hold the quotation verbatim.
+    let f = fx.check("“学而时习之不亦悦乎” [@lunyu; @none]。\n");
+    assert_eq!(rules(&f), [(Rule::SourceTextMissing, Severity::Warn)]);
+    assert!(f[0].data.get("script_only").is_none());
+    // A text that does not match its hash is not searched.
+    let f = fx.check("“学而时习之不亦悦乎” [@old]。\n");
+    assert!(
+        !rules(&f).iter().any(|(r, _)| *r == Rule::QuoteScriptOnly),
+        "{f:#?}"
+    );
+    assert!(rules(&f).contains(&(Rule::QuoteNotFound, Severity::Error)));
+}
+
+#[test]
+fn script_pairs_go_one_way_and_the_message_shows_five() {
+    let fx = Fixture::new(
+        &[reference("a", Some("full"), &["texts/a.txt"])],
+        &[(
+            "texts/a.txt",
+            "學而時習之，遠方來說，開門見山。\n学而时习之，開門見山。\n",
+        )],
+        "",
+    );
+    let f = fx.check("“学而时习之远方来说开门见山” [@a]。\n");
+    assert_eq!(rules(&f), [(Rule::QuoteScriptOnly, Severity::Warn)]);
+    assert_eq!(f[0].data["script_difference_count"], 9);
+    assert_eq!(
+        f[0].data["script_differences"].as_array().map(Vec::len),
+        Some(9)
+    );
+    assert!(f[0].message.ends_with("来 for 來, …"), "{}", f[0].message);
+    assert!(f[0].data.get("similarity").is_none());
+    // Simplified forms in one part and traditional forms in another.
+    let f = fx.check("“學而時習之开门见山” [@a]。\n");
+    assert_eq!(f.len(), 1);
+    assert_eq!(f[0].rule, Rule::QuoteNotFound);
+}

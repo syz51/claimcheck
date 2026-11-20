@@ -162,7 +162,7 @@ commentary_sections = []  # headings of the author's own commentary in paper not
 # reason = "slide 2's own text beside its citation, not a quote of the paper"
 ```
 
-`claimcheck rules` and the source (`src/config.rs`) give the full keyword lists. Keyword phrases match whole words, case-insensitively. A keyword within three words after a modal or conditional word does not count. Those words are must, should, could, would, might, may, can, cannot, whether, if and unless. A capitalised "May" is read as the month, unless it opens the sentence with no number after it. A keyword hyphenated to another word, as in "outcome-trained agents", does not count either.
+`claimcheck rules` and the source (`src/config.rs`) give the full keyword lists. Keyword phrases match whole words, case-insensitively. Since 0.15.0, an end of a phrase that is a CJK character (Chinese, kana or Hangul) needs no word boundary, since such text has no spaces: a configured `优于` matches inside `甲本优于乙本`. The default lists are English only. A keyword within three words after a modal or conditional word does not count. Those words are must, should, could, would, might, may, can, cannot, whether, if and unless. A capitalised "May" is read as the month, unless it opens the sentence with no number after it. A keyword hyphenated to another word, as in "outcome-trained agents", does not count either.
 
 A severity override sets the severity of every finding of the rule, whatever severity the rule would have given it. For example, `quote-not-found = "info"` makes both near misses (warn) and fabricated quotations (error) info, and `depth-insufficient = "error"` makes its info findings errors too. `off` drops every finding of the rule. A [kept quotation](#kept-quotations) stays info under any override except `off`, which drops it too.
 
@@ -272,7 +272,7 @@ With `links_are_evidence` set in `[claimcheck.numbers]` (off by default), a numb
 
 Sentences that cite references are classified by keyword into claim kinds, `result` and `method` by default. A kind listed in `required_depth` has a required depth; other kinds are ignored by this rule, so they neither cause a finding nor make a sentence ambiguous. The severity depends on the evidence for the kind:
 
-- **Error:** a keyword of the kind is within `window_chars` of the citation, in the same clause, with no `;` between them, and the reference's depth is below the kind's requirement.
+- **Error:** a keyword of the kind is within `window_chars` of the citation, in the same clause, with no `;` (or, since 0.15.0, `；`) between them, and the reference's depth is below the kind's requirement.
 - **Info:**
   - several kinds are close and only some are short of depth (the kind is ambiguous);
   - only distant keywords, or only numbers, suggest a kind;

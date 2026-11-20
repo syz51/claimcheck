@@ -1345,7 +1345,10 @@ impl<'a> Ctx<'a> {
                 pos.iter().any(|&p| {
                     marks.iter().any(|&m| {
                         let (a, b) = (p.min(m), p.max(m));
-                        b - a <= window && !block.chars[a..b].iter().any(|c| c.c == ';' && !c.code)
+                        b - a <= window
+                            && !block.chars[a..b]
+                                .iter()
+                                .any(|c| matches!(c.c, ';' | '；') && !c.code)
                     })
                 })
             };

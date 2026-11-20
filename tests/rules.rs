@@ -2234,3 +2234,62 @@ fn uncited_numbers_joined_to_cjk_characters_are_claims() {
     assert!(fx.check("此书共有1500条注文吗？\n").is_empty());
     assert!(fx.check("见第1500页，2012年版。\n").is_empty());
 }
+
+const CJK_KEYWORDS: &str = "[claimcheck.uncited]\ncomparative = [\"优于\", \"more accurate than\"]\n\n[claimcheck.claims.kinds]\nresult = [\"证明\", \"shows that\"]\n";
+
+fn cjk_keywords() -> Fixture {
+    Fixture::new(
+        &[reference("chen", Some("abstract"), &["texts/chen.txt"])],
+        &[(
+            "texts/chen.txt",
+            "《论语》的开端实际上构成了层层上达的阶梯。\n",
+        )],
+        CJK_KEYWORDS,
+    )
+}
+
+#[test]
+fn cjk_comparative_keyword_matches_without_spaces() {
+    let fx = cjk_keywords();
+    for md in ["甲本优于乙本。\n", "甲本 优于 乙本。\n"] {
+        let f = fx.check(md);
+        assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)], "{md}");
+        assert!(f[0].message.contains("(\"优于\")"), "{}", f[0].message);
+    }
+    // No keyword, a question, and a cited sentence give no uncited claim.
+    assert!(fx.check("甲本与乙本相同。\n").is_empty());
+    assert!(fx.check("甲本优于乙本吗？\n").is_empty());
+    assert!(
+        !fx.check("甲本优于乙本 [@chen]。\n")
+            .iter()
+            .any(|f| f.rule == Rule::UncitedClaim)
+    );
+    // English keywords of the same list still match whole words only.
+    let f = fx.check("Edition A is more accurate than edition B.\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)]);
+}
+
+#[test]
+fn cjk_claim_keyword_needs_the_reference_depth() {
+    let fx = cjk_keywords();
+    for md in [
+        "作者证明甲本较早 [@chen]。\n",
+        "作者 证明 甲本较早 [@chen]。\n",
+    ] {
+        let f = fx.check(md);
+        assert_eq!(
+            rules(&f),
+            [(Rule::DepthInsufficient, Severity::Error)],
+            "{md}: {f:#?}"
+        );
+        assert_eq!(f[0].data["near_citation"], json!(["result"]));
+    }
+    assert!(fx.check("作者认为甲本较早 [@chen]。\n").is_empty());
+    // A full-width semicolon ends the clause, as `;` does.
+    let f = fx.check("作者证明甲本较早；乙本另有来源 [@chen]。\n");
+    assert_eq!(
+        rules(&f),
+        [(Rule::DepthInsufficient, Severity::Info)],
+        "{f:#?}"
+    );
+}

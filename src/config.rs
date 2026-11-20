@@ -459,26 +459,37 @@ pub fn asserted_matches<'t>(re: &Regex, text: &'t str) -> Vec<regex::Match<'t>> 
         .collect()
 }
 
-/// Compiles a case-insensitive whole-word alternation of literal phrases.
+/// Compiles a case-insensitive alternation of literal phrases. A phrase
+/// matches as whole words, except at an end that is a CJK character: such
+/// text has no spaces between words, so `优于` matches inside `甲本优于乙本`.
 pub fn phrase_regex(phrases: &[String]) -> Result<Option<Regex>, regex::Error> {
+    const EDGE: &str = r"[^\p{L}\p{N}]";
+    let cjk = |c: Option<char>| c.is_some_and(crate::normalize::is_cjk);
     let alts: Vec<String> = phrases
         .iter()
         .map(|p| p.trim())
         .filter(|p| !p.is_empty())
         .map(|p| {
-            regex::escape(&p.to_lowercase())
+            let words = regex::escape(&p.to_lowercase())
                 .replace(r"\ ", r"\s+")
-                .replace(' ', r"\s+")
+                .replace(' ', r"\s+");
+            let left = if cjk(p.chars().next()) {
+                String::new()
+            } else {
+                format!("(?:^|{EDGE})")
+            };
+            let right = if cjk(p.chars().next_back()) {
+                String::new()
+            } else {
+                format!("(?:$|{EDGE})")
+            };
+            format!("{left}{words}{right}")
         })
         .collect();
     if alts.is_empty() {
         return Ok(None);
     }
-    Regex::new(&format!(
-        r"(?i)(?:^|[^\p{{L}}\p{{N}}])(?:{})(?:$|[^\p{{L}}\p{{N}}])",
-        alts.join("|")
-    ))
-    .map(Some)
+    Regex::new(&format!("(?i)(?:{})", alts.join("|"))).map(Some)
 }
 
 /// Finds `research.toml` by walking up from `start`.
@@ -788,5 +799,20 @@ mod tests {
         assert!(re.is_match("is State of  the art."));
         assert!(re.is_match("X uses Y"));
         assert!(!re.is_match("X reuses Y"));
+    }
+
+    #[test]
+    fn cjk_phrases_match_without_spaces() {
+        let re = phrase_regex(&words(&["优于", "证明", "uses", "比BM25"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(re.find("甲本优于乙本。").unwrap().as_str(), "优于");
+        assert!(re.is_match("作者证明甲本较早"));
+        assert!(re.is_match("甲本 优于 乙本"));
+        assert!(!re.is_match("甲本劣于乙本"));
+        // A Latin end still needs a word boundary.
+        assert!(!re.is_match("X reuses Y"));
+        assert!(re.is_match("结果比BM25 高"));
+        assert!(!re.is_match("结果比BM250高"));
     }
 }

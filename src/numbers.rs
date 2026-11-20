@@ -16,6 +16,11 @@
 //! In a range written with a dash and no spaces, a scale after the second
 //! end applies to the first too: `$0.38–2.01M` is 380000 to 2010000.
 //!
+//! A CJK character next to a number is a boundary, not part of a word: in
+//! `共有1500条` and `高25%` the numbers are plain tokens, `25k人` keeps its
+//! scale, and the dash in `同比为-2.1%` is a minus sign. Chinese numerals are
+//! not read: digits before a multiplier (`1500万`, `3亿`) count as glued.
+//!
 //! A document number that misses every exact key may still match a nearby
 //! source number approximately: see [`NumTok::near_match`].
 
@@ -341,8 +346,24 @@ fn unshifted(value: &str, shift: usize) -> String {
     canonical(int, &format!("{moved}{frac}"))
 }
 
+/// A letter that can glue to a number as part of a word or an identifier.
+/// CJK scripts write a number with no space on either side (`共有1500条`), so
+/// their characters end a number like a space does.
 fn is_letter(c: char) -> bool {
-    c.is_alphabetic()
+    c.is_alphabetic() && !crate::normalize::is_cjk(c)
+}
+
+/// A letter or digit that a dash joins to a following number (`BGE-3`,
+/// `10-20`), so the dash is no minus sign.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() && !crate::normalize::is_cjk(c)
+}
+
+/// A Chinese numeral that multiplies the digits before it (`1500万`, `3亿`).
+/// Chinese numerals are not read, so such a number is skipped like one glued
+/// to a letter, rather than checked by its digits alone.
+fn is_cjk_scale(c: char) -> bool {
+    matches!(c, '十' | '百' | '千' | '万' | '萬' | '亿' | '億' | '兆')
 }
 
 /// What the letters at `chars[k..]` say as a suffix of a number: the power of
@@ -422,11 +443,12 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
         }
         let end = i;
         // "-2.1" or "(-2.1)", not "10-20", "52%-90%", "BGE-3" or "x-2".
+        // After a CJK character the dash is a minus sign: "同比为-2.1%".
         let dash = start > 1 && chars[start - 1] == '-';
         let percent_dash = dash && matches!(chars[start - 2], '%' | '‰');
         let negative = start > 0
             && chars[start - 1] == '-'
-            && (start == 1 || !(chars[start - 2].is_alphanumeric() || percent_dash));
+            && (start == 1 || !(is_word_char(chars[start - 2]) || percent_dash));
         let glued_left = start > 0 && {
             let p = chars[start - 1];
             is_letter(p)
@@ -456,6 +478,8 @@ pub fn scan(chars: &[char]) -> Vec<NumTok> {
             && !at(after_space + 2).is_some_and(is_letter);
         if matches!(at(after_space), Some('%' | '‰')) || pp {
             percent = true;
+        } else if at(end).is_some_and(is_cjk_scale) {
+            glued_right = true;
         } else if at(end).is_some_and(|c| is_letter(c) || c == '_') {
             match suffix_at(chars, end) {
                 Some(0) => {}
@@ -518,6 +542,32 @@ mod tests {
         let mut toks = scan(&chars);
         assert_eq!(toks.len(), 1, "{s}: {toks:?}");
         toks.remove(0)
+    }
+
+    #[test]
+    fn cjk_characters_end_a_number() {
+        for s in ["共有1500条", "は1500である", "은1500개"] {
+            let t = one(s);
+            assert!(!t.glued_left && !t.glued_right, "{s}");
+            assert_eq!(t.value, "1500");
+        }
+        assert_eq!(one("共25k人").scaled.unwrap().value, "25000");
+        assert!(one("高25%").percent);
+        // A Chinese multiplier glues, and so does a Latin letter.
+        assert!(one("共1500万条").glued_right);
+        assert!(one("共3亿").glued_right);
+        assert!(one("用H133").glued_left);
+        // A dash after a CJK character is a minus sign; after a Latin
+        // letter or a digit it is not.
+        assert!(one("同比为-2.1%").negative);
+        assert!(!one("BGE-3").negative);
+        assert_eq!(
+            scan(&"第10-20页".chars().collect::<Vec<_>>())
+                .iter()
+                .map(|t| t.negative)
+                .collect::<Vec<_>>(),
+            [false, false]
+        );
     }
 
     #[test]

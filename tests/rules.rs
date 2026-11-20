@@ -2152,3 +2152,85 @@ fn off_drops_a_kept_quote_without_making_it_stale() {
     let (f, _) = claimcheck::run(&fx.project, &[root.join("doc.md")]).unwrap();
     assert!(f.is_empty(), "{f:#?}");
 }
+
+/// A reference whose text is Chinese and prints 176 and 200241.
+fn chinese() -> Fixture {
+    Fixture::new(
+        &[reference("chen", Some("full"), &["texts/chen.txt"])],
+        &[(
+            "texts/chen.txt",
+            "《论语》的开端实际上构成了层层上达的阶梯。\n第 １７６页，共收注文1500条，邮编２００２４１。\n",
+        )],
+        "",
+    )
+}
+
+#[test]
+fn numbers_joined_to_cjk_characters_are_checked() {
+    let fx = chinese();
+    // No space on either side of the number.
+    assert_eq!(
+        unmatched_numbers(&fx, "该文印有数字999 [@chen]。\n"),
+        ["999"]
+    );
+    assert_eq!(
+        unmatched_numbers(&fx, "该文共有999条注文 [@chen]。\n"),
+        ["999"]
+    );
+    assert_eq!(unmatched_numbers(&fx, "准确率高25% [@chen]。\n"), ["25%"]);
+    // A scale before a CJK character still applies.
+    assert!(unmatched_numbers(&fx, "共收1.5k条 [@chen]。\n").is_empty());
+    // Numbers the text holds match, joined or not.
+    assert!(unmatched_numbers(&fx, "该文共收注文1500条 [@chen]。\n").is_empty());
+    assert!(unmatched_numbers(&fx, "邮编为200241 [@chen]。\n").is_empty());
+    // A Latin letter still glues: an identifier is no number.
+    assert!(unmatched_numbers(&fx, "该文采用H999和gpt-400模型 [@chen]。\n").is_empty());
+    // Ordinals, alone or as a range, and years in the year range are no
+    // quantities.
+    assert!(
+        unmatched_numbers(
+            &fx,
+            "2012年，该文第999页、第 300 章、第120-135页和第3.25节至第400节有说明 [@chen]。\n"
+        )
+        .is_empty()
+    );
+    // An ordinal hides no percentage, and no number after a list comma.
+    assert_eq!(
+        unmatched_numbers(&fx, "第999页说高25%，第3章,999条 [@chen]。\n"),
+        ["25%", "999"]
+    );
+    // A locator character also ends common words, so it hides nothing.
+    assert_eq!(
+        unmatched_numbers(&fx, "回收问卷999份，发表998篇论文 [@chen]。\n"),
+        ["999", "998"]
+    );
+    // Kana and Hangul are boundaries too.
+    assert_eq!(
+        unmatched_numbers(&fx, "注文は999条である [@chen]。\n"),
+        ["999"]
+    );
+    assert_eq!(
+        unmatched_numbers(&fx, "주석은999개이다 [@chen].\n"),
+        ["999"]
+    );
+    // Digits before a Chinese multiplier are not read as their bare value.
+    assert!(unmatched_numbers(&fx, "共有1500万条、999亿条 [@chen]。\n").is_empty());
+    // After a CJK character a dash is a minus sign: the text has no -1500.
+    assert_eq!(
+        unmatched_numbers(&fx, "同比为-1500，又为-2.5% [@chen]。\n"),
+        ["-1500", "-2.5%"]
+    );
+}
+
+#[test]
+fn uncited_numbers_joined_to_cjk_characters_are_claims() {
+    let fx = chinese();
+    let f = fx.check("此书共有1500条注文。\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)], "{f:#?}");
+    assert_eq!(f[0].data["numbers"], json!(["1500"]));
+    let f = fx.check("甲本的准确率比乙本高25%。\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)], "{f:#?}");
+    // A question, a locator and a year assert no quantity.
+    assert!(fx.check("此书共有1500条注文吗？\n").is_empty());
+    assert!(fx.check("见第1500页，2012年版。\n").is_empty());
+}

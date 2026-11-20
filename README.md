@@ -255,8 +255,8 @@ These are not checked:
 
 - years from `year_min` to `year_max`;
 - plain integers below `min_integer`;
-- numbers glued to letters (`A12`, `F1`, `gpt-4`) or dotted versions (`1.2.3`). Since 0.14.0, a CJK character (Chinese, kana or Hangul) does not glue: it ends a number as a space does, so the numbers in `共有1500条` and `高25%` are checked;
-- section, table, figure and equation locators. Since 0.14.0, also a Chinese ordinal (`第3章`, `第 176 页`) and a number after `卷`, `图`, `圖`, `表`, `页`, `頁`, `章`, `节`, `節`, `注` or `註`;
+- numbers glued to letters (`A12`, `F1`, `gpt-4`) or dotted versions (`1.2.3`). Since 0.14.0, a CJK character (Chinese, kana or Hangul) does not glue: it ends a number as a space does, so the numbers in `共有1500条` and `高25%` are checked, and the dash in `同比为-2.1%` is a minus sign. Digits before a Chinese multiplier (`十`, `百`, `千`, `万`, `萬`, `亿`, `億`, `兆`) still count as glued, so `1500万` is not checked;
+- section, table, figure and equation locators. Since 0.14.0, also a Chinese ordinal after `第`, alone or as a range (`第3章`, `第 176 页`, `第120-135页`, `第3节至第5节`). A page number without `第` (`见176页`) is checked as a number;
 - reference numbers, `#N`, URLs, DOIs, arXiv ids, dates and times;
 - shortened hex addresses (`0x0d4a…1852`, `0x0d4a...1852`);
 - the number in an index name after Nikkei, TOPIX, S&P, Russell, FTSE, STOXX, KOSPI, CSI, Nasdaq, DAX or CAC (`Nikkei 225`, `S&P 500`), any case, with at most one space before it;

@@ -2185,18 +2185,40 @@ fn numbers_joined_to_cjk_characters_are_checked() {
     assert!(unmatched_numbers(&fx, "邮编为200241 [@chen]。\n").is_empty());
     // A Latin letter still glues: an identifier is no number.
     assert!(unmatched_numbers(&fx, "该文采用H999和gpt-400模型 [@chen]。\n").is_empty());
-    // Ordinals, locators and years in the year range are no quantities.
+    // Ordinals, alone or as a range, and years in the year range are no
+    // quantities.
     assert!(
         unmatched_numbers(
             &fx,
-            "2012年，该文第999页、第 300 章、卷120、图350和表3.25有说明 [@chen]。\n"
+            "2012年，该文第999页、第 300 章、第120-135页和第3.25节至第400节有说明 [@chen]。\n"
         )
         .is_empty()
     );
-    // A locator hides no percentage.
+    // An ordinal hides no percentage, and no number after a list comma.
     assert_eq!(
-        unmatched_numbers(&fx, "第999页说高25% [@chen]。\n"),
-        ["25%"]
+        unmatched_numbers(&fx, "第999页说高25%，第3章,999条 [@chen]。\n"),
+        ["25%", "999"]
+    );
+    // A locator character also ends common words, so it hides nothing.
+    assert_eq!(
+        unmatched_numbers(&fx, "回收问卷999份，发表998篇论文 [@chen]。\n"),
+        ["999", "998"]
+    );
+    // Kana and Hangul are boundaries too.
+    assert_eq!(
+        unmatched_numbers(&fx, "注文は999条である [@chen]。\n"),
+        ["999"]
+    );
+    assert_eq!(
+        unmatched_numbers(&fx, "주석은999개이다 [@chen].\n"),
+        ["999"]
+    );
+    // Digits before a Chinese multiplier are not read as their bare value.
+    assert!(unmatched_numbers(&fx, "共有1500万条、999亿条 [@chen]。\n").is_empty());
+    // After a CJK character a dash is a minus sign: the text has no -1500.
+    assert_eq!(
+        unmatched_numbers(&fx, "同比为-1500，又为-2.5% [@chen]。\n"),
+        ["-1500", "-2.5%"]
     );
 }
 

@@ -108,7 +108,8 @@ impl Default for NumbersConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ClaimsToml {
-    /// Claim kind → words or phrases (case-insensitive, whole words).
+    /// Claim kind → words or phrases (case-insensitive, whole words; see
+    /// [`phrase_regex`] for CJK text).
     pub kinds: BTreeMap<String, Vec<String>>,
     /// Claim kind → minimum reference depth. When absent, the defaults
     /// (`result` and `method` need `method`) apply to the kinds that exist.
@@ -459,26 +460,48 @@ pub fn asserted_matches<'t>(re: &Regex, text: &'t str) -> Vec<regex::Match<'t>> 
         .collect()
 }
 
-/// Compiles a case-insensitive whole-word alternation of literal phrases.
+/// Compiles a case-insensitive alternation of literal phrases, each in its
+/// own capture group (see [`keyword_of`]). A phrase matches as whole words.
+/// CJK text has no spaces between words, so an end of a phrase that is a CJK
+/// character needs no boundary (`优于` matches inside `甲本优于乙本`), and a
+/// CJK character next to another end is a boundary (`SOTA` matches inside
+/// `达到SOTA水平`). A match includes the boundary characters.
 pub fn phrase_regex(phrases: &[String]) -> Result<Option<Regex>, regex::Error> {
+    let edge = format!(r"(?:[^\p{{L}}\p{{N}}]|[{}])", crate::normalize::CJK_CLASS);
+    let cjk = |c: Option<char>| c.is_some_and(crate::normalize::is_cjk);
     let alts: Vec<String> = phrases
         .iter()
         .map(|p| p.trim())
         .filter(|p| !p.is_empty())
         .map(|p| {
-            regex::escape(&p.to_lowercase())
+            let words = regex::escape(&p.to_lowercase())
                 .replace(r"\ ", r"\s+")
-                .replace(' ', r"\s+")
+                .replace(' ', r"\s+");
+            let left = if cjk(p.chars().next()) {
+                String::new()
+            } else {
+                format!("(?:^|{edge})")
+            };
+            let right = if cjk(p.chars().next_back()) {
+                String::new()
+            } else {
+                format!("(?:$|{edge})")
+            };
+            format!("{left}({words}){right}")
         })
         .collect();
     if alts.is_empty() {
         return Ok(None);
     }
-    Regex::new(&format!(
-        r"(?i)(?:^|[^\p{{L}}\p{{N}}])(?:{})(?:$|[^\p{{L}}\p{{N}}])",
-        alts.join("|")
-    ))
-    .map(Some)
+    Regex::new(&format!("(?i)(?:{})", alts.join("|"))).map(Some)
+}
+
+/// The phrase of a match `m` of a [`phrase_regex`] in `text`, without the
+/// boundary characters around it.
+pub fn keyword_of<'t>(re: &Regex, text: &'t str, m: regex::Match<'t>) -> &'t str {
+    re.captures_at(text, m.start())
+        .and_then(|c| c.iter().skip(1).flatten().next())
+        .map_or(m.as_str(), |k| k.as_str())
 }
 
 /// Finds `research.toml` by walking up from `start`.
@@ -788,5 +811,34 @@ mod tests {
         assert!(re.is_match("is State of  the art."));
         assert!(re.is_match("X uses Y"));
         assert!(!re.is_match("X reuses Y"));
+    }
+
+    #[test]
+    fn cjk_phrases_match_without_spaces() {
+        let re = phrase_regex(&words(&["优于", "证明", "uses", "比BM25"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(re.find("甲本优于乙本。").unwrap().as_str(), "优于");
+        assert!(re.is_match("作者证明甲本较早"));
+        assert!(re.is_match("甲本 优于 乙本"));
+        assert!(!re.is_match("甲本劣于乙本"));
+        // A Latin end still needs a word boundary.
+        assert!(!re.is_match("X reuses Y"));
+        assert!(re.is_match("结果比BM25高"));
+        assert!(!re.is_match("结果比BM250高"));
+        // A CJK character is a boundary of a Latin end.
+        let text = "该方法uses了BM25。";
+        let m = re.find(text).unwrap();
+        assert_eq!(m.as_str(), "法uses了");
+        assert_eq!(keyword_of(&re, text, m), "uses");
+        let text = "X uses Y";
+        assert_eq!(keyword_of(&re, text, re.find(text).unwrap()), "uses");
+        // Kana, the iteration mark and Hangul are CJK ends too.
+        let re = phrase_regex(&words(&["様々", "より高い", "보다"]))
+            .unwrap()
+            .unwrap();
+        assert!(re.is_match("結果は様々である"));
+        assert!(re.is_match("精度はBM25より高いです"));
+        assert!(re.is_match("이것보다높다"));
     }
 }

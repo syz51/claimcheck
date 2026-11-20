@@ -1345,7 +1345,10 @@ impl<'a> Ctx<'a> {
                 pos.iter().any(|&p| {
                     marks.iter().any(|&m| {
                         let (a, b) = (p.min(m), p.max(m));
-                        b - a <= window && !block.chars[a..b].iter().any(|c| c.c == ';' && !c.code)
+                        b - a <= window
+                            && !block.chars[a..b]
+                                .iter()
+                                .any(|c| matches!(c.c, ';' | '；') && !c.code)
                     })
                 })
             };
@@ -1462,7 +1465,7 @@ impl<'a> Ctx<'a> {
             .uncited
             .comparative
             .as_ref()
-            .and_then(|re| asserted_matches(re, &text).into_iter().next());
+            .and_then(|re| Some((re, asserted_matches(re, &text).into_iter().next()?)));
         if nums.is_empty() && comparative.is_none() {
             return false;
         }
@@ -1479,9 +1482,9 @@ impl<'a> Ctx<'a> {
             return true;
         }
         let what = match comparative {
-            Some(m) => format!(
+            Some((re, m)) => format!(
                 "comparative claim (\"{}\")",
-                m.as_str().trim_matches(|c: char| !c.is_alphanumeric())
+                config::keyword_of(re, &text, m)
             ),
             None => format!(
                 "quantitative claim ({})",

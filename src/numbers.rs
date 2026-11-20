@@ -16,6 +16,10 @@
 //! In a range written with a dash and no spaces, a scale after the second
 //! end applies to the first too: `$0.38–2.01M` is 380000 to 2010000.
 //!
+//! A CJK character next to a number is a boundary, not part of a word: in
+//! `共有1500条` and `高25%` the numbers are plain tokens, and `25k人` keeps
+//! its scale.
+//!
 //! A document number that misses every exact key may still match a nearby
 //! source number approximately: see [`NumTok::near_match`].
 
@@ -341,8 +345,11 @@ fn unshifted(value: &str, shift: usize) -> String {
     canonical(int, &format!("{moved}{frac}"))
 }
 
+/// A letter that can glue to a number as part of a word or an identifier.
+/// CJK scripts write a number with no space on either side (`共有1500条`), so
+/// their characters end a number like a space does.
 fn is_letter(c: char) -> bool {
-    c.is_alphabetic()
+    c.is_alphabetic() && !crate::normalize::is_cjk(c)
 }
 
 /// What the letters at `chars[k..]` say as a suffix of a number: the power of

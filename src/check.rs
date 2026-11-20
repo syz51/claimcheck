@@ -1918,6 +1918,8 @@ static MASKS: LazyLock<Vec<(MaskKind, Regex)>> = LazyLock::new(|| {
         (Date, format!(r"(?i)\b{DAY}(?:st|nd|rd|th)?\s*{MONTH}(?:,?\s*{YEAR})?\b")),
         (Date, format!(r"(?i)\b{MONTH}\s*{DAY}(?:st|nd|rd|th)?(?:,?\s*{YEAR})?\b")),
         (Locator, format!(r"(?i)(?:§+\s*|\b(?:{section_words})\s*)(?:{LOC})(?:\s*(?:[-,&/]|and|to|or)\s*(?:{LOC}))*")),
+        // Chinese ordinals and locators: 第3章, 第 176 页, 卷12, 图3.2
+        (Locator, r"(?:第|[卷圖图表頁页章節节注註])\s?\d+(?:\.\d+)*".to_string()),
     ]
     .into_iter()
     .map(|(k, p)| (k, Regex::new(&p).expect("valid mask regex")))

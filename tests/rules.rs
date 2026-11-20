@@ -2152,3 +2152,63 @@ fn off_drops_a_kept_quote_without_making_it_stale() {
     let (f, _) = claimcheck::run(&fx.project, &[root.join("doc.md")]).unwrap();
     assert!(f.is_empty(), "{f:#?}");
 }
+
+/// A reference whose text is Chinese and prints 176 and 200241.
+fn chinese() -> Fixture {
+    Fixture::new(
+        &[reference("chen", Some("full"), &["texts/chen.txt"])],
+        &[(
+            "texts/chen.txt",
+            "《论语》的开端实际上构成了层层上达的阶梯。\n第 １７６页，共收注文1500条，邮编２００２４１。\n",
+        )],
+        "",
+    )
+}
+
+#[test]
+fn numbers_joined_to_cjk_characters_are_checked() {
+    let fx = chinese();
+    // No space on either side of the number.
+    assert_eq!(
+        unmatched_numbers(&fx, "该文印有数字999 [@chen]。\n"),
+        ["999"]
+    );
+    assert_eq!(
+        unmatched_numbers(&fx, "该文共有999条注文 [@chen]。\n"),
+        ["999"]
+    );
+    assert_eq!(unmatched_numbers(&fx, "准确率高25% [@chen]。\n"), ["25%"]);
+    // A scale before a CJK character still applies.
+    assert!(unmatched_numbers(&fx, "共收1.5k条 [@chen]。\n").is_empty());
+    // Numbers the text holds match, joined or not.
+    assert!(unmatched_numbers(&fx, "该文共收注文1500条 [@chen]。\n").is_empty());
+    assert!(unmatched_numbers(&fx, "邮编为200241 [@chen]。\n").is_empty());
+    // A Latin letter still glues: an identifier is no number.
+    assert!(unmatched_numbers(&fx, "该文采用H999和gpt-400模型 [@chen]。\n").is_empty());
+    // Ordinals, locators and years in the year range are no quantities.
+    assert!(
+        unmatched_numbers(
+            &fx,
+            "2012年，该文第999页、第 300 章、卷120、图350和表3.25有说明 [@chen]。\n"
+        )
+        .is_empty()
+    );
+    // A locator hides no percentage.
+    assert_eq!(
+        unmatched_numbers(&fx, "第999页说高25% [@chen]。\n"),
+        ["25%"]
+    );
+}
+
+#[test]
+fn uncited_numbers_joined_to_cjk_characters_are_claims() {
+    let fx = chinese();
+    let f = fx.check("此书共有1500条注文。\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)], "{f:#?}");
+    assert_eq!(f[0].data["numbers"], json!(["1500"]));
+    let f = fx.check("甲本的准确率比乙本高25%。\n");
+    assert_eq!(rules(&f), [(Rule::UncitedClaim, Severity::Warn)], "{f:#?}");
+    // A question, a locator and a year assert no quantity.
+    assert!(fx.check("此书共有1500条注文吗？\n").is_empty());
+    assert!(fx.check("见第1500页，2012年版。\n").is_empty());
+}
